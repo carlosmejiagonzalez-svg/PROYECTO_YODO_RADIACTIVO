@@ -98,17 +98,26 @@ if submit:
     if not nombre or not cedula:
         st.sidebar.error("Ingrese Nombre e ID.")
     else:
-        nuevo_p = pd.DataFrame([{
+        # 1. Crear el nuevo registro
+        nuevo_p = {
             "Nombre": nombre, "ID": cedula, "Teléfono": tel, "Entidad": entidad,
             "Edad": edad, "Diagnóstico": diag, "Fecha Cápsula": fecha_cap.strftime("%d/%m/%Y"), 
             "mCI": dosis
-        }])
-        st.session_state.df_pacientes = pd.concat([st.session_state.df_pacientes, nuevo_p], ignore_index=True)
+        }
+        
+        # 2. AGREGAR A LA LISTA EXISTENTE (Sin borrar lo anterior)
+        # Convertimos el diccionario a DataFrame y lo pegamos al final
+        df_nuevo = pd.DataFrame([nuevo_p])
+        st.session_state.df_pacientes = pd.concat([st.session_state.df_pacientes, df_nuevo], ignore_index=True)
+        
+        # 3. Intentar guardar en Drive
         try:
             conn.update(data=st.session_state.df_pacientes)
             st.sidebar.success(f"✅ Sincronizado: {nombre}")
         except:
-            st.sidebar.warning("⚠️ Guardado localmente")
+            st.sidebar.warning("⚠️ Guardado en lista local (No se pudo enviar a Drive)")
+        
+        # Eliminamos el st.rerun() de aquí para que no refresque y borre la memoria local
         st.rerun()
 
 # Totales
