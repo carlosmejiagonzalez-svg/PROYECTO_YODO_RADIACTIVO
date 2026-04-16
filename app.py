@@ -21,18 +21,18 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 def cargar_datos():
     try:
         df = conn.read(ttl="0s")
-        # Limpiar espacios en blanco en los nombres de las columnas
-        df.columns = [str(c).strip() for c in df.columns]
-        return df
+        if df is not None:
+            df.columns = [str(c).strip() for c in df.columns]
+            return df
+        return pd.DataFrame(columns=["Nombre", "ID", "Teléfono", "Entidad", "Edad", "Diagnóstico", "Fecha Cápsula", "mCI"])
     except:
-        # Si no hay conexión, iniciamos con la estructura básica
         return pd.DataFrame(columns=["Nombre", "ID", "Teléfono", "Entidad", "Edad", "Diagnóstico", "Fecha Cápsula", "mCI"])
 
-# Inicializar datos en la sesión
+# Inicializar datos
 if 'df_pacientes' not in st.session_state:
     st.session_state.df_pacientes = cargar_datos()
 
-# === FUNCIÓN PARA GENERAR EL PDF ===
+# === FUNCIÓN PDF ===
 def generar_pdf_stream(df, total):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, leftMargin=30, rightMargin=30, topMargin=30)
@@ -52,10 +52,8 @@ def generar_pdf_stream(df, total):
     elementos.append(Paragraph("<b>PROGRAMACIÓN DE PACIENTES YODO RADIACTIVO</b>", titulo_estilo))
     elementos.append(Spacer(1, 20))
 
-    # Preparar tabla para PDF usando nombres de columnas flexibles
     data = [["Nombre", "ID", "Teléfono", "Entidad", "Edad", "Diagnóstico", "Fecha Cápsula", "mCi"]]
     
-    # Identificar columna mCI ignorando mayúsculas
     col_mci = [c for c in df.columns if c.lower() == 'mci']
     key_mci = col_mci[0] if col_mci else 'mCI'
 
@@ -85,7 +83,6 @@ def generar_pdf_stream(df, total):
 # === INTERFAZ ===
 st.title("☢️ Gestión de Medicina Nuclear")
 
-# Registro
 with st.sidebar.form("form_paciente", clear_on_submit=True):
     nombre = st.text_input("Nombre Completo").upper()
     cedula = st.text_input("ID")
@@ -101,27 +98,45 @@ if submit:
     if not nombre or not cedula:
         st.sidebar.error("Ingrese Nombre e ID.")
     else:
-        # Crear nuevo registro
         nuevo_p = pd.DataFrame([{
             "Nombre": nombre, "ID": cedula, "Teléfono": tel, "Entidad": entidad,
             "Edad": edad, "Diagnóstico": diag, "Fecha Cápsula": fecha_cap.strftime("%d/%m/%Y"), 
             "mCI": dosis
         }])
-        
-        # Actualizar memoria local inmediatamente
         st.session_state.df_pacientes = pd.concat([st.session_state.df_pacientes, nuevo_p], ignore_index=True)
-        
-        # Intentar actualizar Drive sin romper la app
         try:
             conn.update(data=st.session_state.df_pacientes)
-            st.sidebar.success(f"✅ Sincronizado con Drive: {nombre}")
+            st.sidebar.success(f"✅ Sincronizado: {nombre}")
         except:
-            st.sidebar.warning("⚠️ Guardado en lista local (Sin conexión a Drive)")
-        
+            st.sidebar.warning("⚠️ Guardado localmente")
         st.rerun()
 
 # Totales
 total_mci = 0.0
 key_mci = "mCI"
 if not st.session_state.df_pacientes.empty:
-    st.session_state.df_pacientes.columns = [c.strip()
+    st.session_state.df_pacientes.columns = [c.strip() for c in st.session_state.df_pacientes.columns]
+    encontrada = [c for c in st.session_state.df_pacientes.columns if c.lower() == 'mci']
+    if encontrada:
+        key_mci = encontrada[0]
+        total_mci = st.session_state.df_pacientes[key_mci].sum()
+
+st.metric("Total Programado", f"{round(total_mci, 2)} mCi", f"{round(150-total_mci, 2)} disponibles")
+
+# Tabla visual
+if not st.session_state.df_pacientes.empty:
+    for i, row in st.session_state.df_pacientes.iterrows():
+        c1, c2, c3, c4 = st.columns([4, 2, 2, 1])
+        c1.write(row['Nombre'])
+        c2.write(row['ID'])
+        c3.write(f"{row.get(key_mci, 0)} mCi")
+        if c4.button("🗑️", key=f"del_{i}"):
+            st.session_state.df_pacientes = st.session_state.df_pacientes.drop(i).reset_index(drop=True)
+            try:
+                conn.update(data=st.session_state.df_pacientes)
+            except: pass
+            st.rerun()
+    
+    st.divider()
+    pdf = generar_pdf_stream(st.session_state.df_pacientes, round(total_mci, 2))
+    st.download_button("📥 Descargar PDF", pdf, f"pedido_{datetime.now(colombia_tz).strftime('%d_%m')}.pdf", use_container_width=True)
