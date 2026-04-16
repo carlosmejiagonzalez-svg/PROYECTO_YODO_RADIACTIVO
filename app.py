@@ -142,7 +142,14 @@ if not st.session_state.df_pacientes.empty:
         if c4.button("🗑️", key=f"del_{i}"):
             st.session_state.df_pacientes = st.session_state.df_pacientes.drop(i).reset_index(drop=True)
             try:
-                conn.update(data=st.session_state.df_pacientes)
+                # Reemplaza tu bloque de "try...except" por este:
+        try:
+            # Forzamos a que escriba en la pestaña "Sheet1"
+            conn.update(data=st.session_state.df_pacientes, worksheet="Sheet1")
+            st.sidebar.success(f"✅ ¡Sincronizado en Excel!: {nombre}")
+        except Exception as e:
+            # Esto nos dirá el error exacto si vuelve a fallar
+            st.sidebar.warning(f"⚠️ Error al guardar: {e}")
             except: pass
             st.rerun()
     
