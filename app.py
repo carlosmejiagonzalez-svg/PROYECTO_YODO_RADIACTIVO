@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 from datetime import datetime
+import pytz  # Librería para manejar zonas horarias
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Image, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
@@ -10,6 +11,9 @@ import io
 
 # === CONFIGURACIÓN DE PÁGINA ===
 st.set_page_config(page_title="Programación Yodo Radiactivo", layout="wide")
+
+# Configurar Zona Horaria de Colombia
+colombia_tz = pytz.timezone('America/Bogota')
 
 # Inicializar estados de sesión
 if 'pacientes' not in st.session_state:
@@ -23,7 +27,6 @@ RUTA_LOGO = "logo.png"
 # === FUNCIÓN PARA GENERAR EL PDF ===
 def generar_pdf_stream(lista_pacientes, total):
     buffer = io.BytesIO()
-    # Márgenes ajustados para que quepan 8 columnas
     doc = SimpleDocTemplate(buffer, pagesize=letter, leftMargin=30, rightMargin=30, topMargin=30)
     elementos = []
     estilos = getSampleStyleSheet()
@@ -37,7 +40,6 @@ def generar_pdf_stream(lista_pacientes, total):
         except:
             pass
     
-    # 2. Espaciador para separar contenido del logo
     elementos.append(Spacer(1, 40))
 
     # 3. Título
@@ -51,7 +53,6 @@ def generar_pdf_stream(lista_pacientes, total):
     for p in lista_pacientes:
         data.append([p['n'], p['id'], p['tel'], p['ent'], p['e'], p['d'], p['fecha'], p['mci']])
     
-    # Anchos de columna optimizados
     t = Table(data, colWidths=[110, 55, 65, 70, 30, 100, 75, 45])
     t.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.darkblue),
@@ -63,10 +64,11 @@ def generar_pdf_stream(lista_pacientes, total):
     ]))
     elementos.append(t)
 
-    # 5. Totales
+    # 5. Totales con Fecha de Colombia
+    fecha_colombia = datetime.now(colombia_tz).strftime('%d/%m/%Y %H:%M')
     elementos.append(Spacer(1, 25))
     elementos.append(Paragraph(f"<b>TOTAL DOSIS SEMANAL: {total} mCi</b>", estilos['Normal']))
-    elementos.append(Paragraph(f"Generado el: {datetime.now().strftime('%d/%m/%Y %H:%M')}", estilos['Italic']))
+    elementos.append(Paragraph(f"Reporte generado el: {fecha_colombia} (Hora Colombia)", estilos['Italic']))
 
     doc.build(elementos)
     buffer.seek(0)
@@ -76,7 +78,6 @@ def generar_pdf_stream(lista_pacientes, total):
 st.title("☢️ Gestión de Medicina Nuclear")
 st.markdown("---")
 
-# Sidebar para ingreso de datos
 st.sidebar.header("📝 Registro de Paciente")
 with st.sidebar.form("form_paciente", clear_on_submit=True):
     nombre = st.text_input("Nombre Completo").upper()
@@ -85,7 +86,10 @@ with st.sidebar.form("form_paciente", clear_on_submit=True):
     entidad = st.text_input("Entidad de Salud").upper()
     edad = st.number_input("Edad", min_value=0, max_value=110, step=1)
     diag = st.text_area("Diagnóstico Médico").upper()
-    fecha_cap = st.date_input("Fecha toma de cápsula", min_value=datetime.now())
+    
+    # Fecha de toma predeterminada a hoy en Colombia
+    fecha_cap = st.date_input("Fecha toma de cápsula", value=datetime.now(colombia_tz))
+    
     dosis = st.number_input("Dosis Requerida (mCi)", min_value=0.0, step=0.1, format="%.1f")
     
     submit = st.form_submit_button("Añadir a la lista")
@@ -104,25 +108,22 @@ if submit:
         st.session_state.total_mci += dosis
         st.sidebar.success(f"✅ Agregado: {nombre}")
 
-# Cuerpo Principal
 col_stats1, col_stats2 = st.columns(2)
 with col_stats1:
     st.metric("Total Dosis Programada", f"{round(st.session_state.total_mci, 2)} mCi")
 with col_stats2:
     disponible = round(150.0 - st.session_state.total_mci, 2)
-    st.metric("Cupo Disponible", f"{disponible} mCi", delta_color="normal")
+    st.metric("Cupo Disponible", f"{disponible} mCi")
 
 st.subheader("📋 Lista de Pacientes")
 
 if st.session_state.pacientes:
-    # Encabezados de la lista visual
     h_col1, h_col2, h_col3, h_col4 = st.columns([4, 2, 2, 1])
     h_col1.write("**Paciente**")
     h_col2.write("**ID**")
     h_col3.write("**Dosis**")
     h_col4.write("**Acción**")
     
-    # Listado con opción de eliminar individualmente
     for i, p in enumerate(st.session_state.pacientes):
         c1, c2, c3, c4 = st.columns([4, 2, 2, 1])
         c1.write(p['n'])
@@ -134,16 +135,15 @@ if st.session_state.pacientes:
             st.rerun()
     
     st.markdown("---")
-    
-    # Botones finales
     btn_col1, btn_col2 = st.columns(2)
     
     with btn_col1:
         pdf_data = generar_pdf_stream(st.session_state.pacientes, round(st.session_state.total_mci, 2))
+        nombre_pdf = f"programacion_yodo_{datetime.now(colombia_tz).strftime('%d_%m_%Y')}.pdf"
         st.download_button(
             label="📥 Descargar Programación (PDF)",
             data=pdf_data,
-            file_name=f"programacion_yodo_{datetime.now().strftime('%d_%m_%Y')}.pdf",
+            file_name=nombre_pdf,
             mime="application/pdf",
             use_container_width=True
         )
@@ -154,4 +154,4 @@ if st.session_state.pacientes:
             st.session_state.total_mci = 0.0
             st.rerun()
 else:
-    st.info("Aún no se han ingresado pacientes para esta semana.")
+    st.info("Aún no se han ingresado pacientes.")
