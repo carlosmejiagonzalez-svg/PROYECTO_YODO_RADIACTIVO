@@ -2,56 +2,55 @@ import streamlit as st
 import pandas as pd
 import os
 from datetime import datetime
-import pytz  # Librería para manejar zonas horarias
+import pytz
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Image, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 import io
+from streamlit_gsheets import GSheetsConnection
 
-# === CONFIGURACIÓN DE PÁGINA ===
+# === CONFIGURACIÓN ===
 st.set_page_config(page_title="Programación Yodo Radiactivo", layout="wide")
-
-# Configurar Zona Horaria de Colombia
 colombia_tz = pytz.timezone('America/Bogota')
+RUTA_LOGO = "logo.png"
 
-# Inicializar estados de sesión
-if 'pacientes' not in st.session_state:
-    st.session_state.pacientes = []
-if 'total_mci' not in st.session_state:
-    st.session_state.total_mci = 0.0
+# === CONEXIÓN A GOOGLE SHEETS ===
+# Esto leerá la configuración que pondremos en el panel de Streamlit
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Nombre del archivo del logo en GitHub
-RUTA_LOGO = "logo.png" 
+def cargar_datos():
+    try:
+        return conn.read(ttl="0s") # ttl=0s para que siempre traiga lo más reciente
+    except:
+        return pd.DataFrame(columns=["Nombre", "ID", "Teléfono", "Entidad", "Edad", "Diagnóstico", "Fecha Cápsula", "mCi"])
 
-# === FUNCIÓN PARA GENERAR EL PDF ===
-def generar_pdf_stream(lista_pacientes, total):
+# Cargar datos al iniciar
+if 'df_pacientes' not in st.session_state:
+    st.session_state.df_pacientes = cargar_datos()
+
+# === FUNCIÓN PDF (Se mantiene igual) ===
+def generar_pdf_stream(df, total):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, leftMargin=30, rightMargin=30, topMargin=30)
     elementos = []
     estilos = getSampleStyleSheet()
-
-    # 1. Logo
     if os.path.exists(RUTA_LOGO):
         try:
             img = Image(RUTA_LOGO, width=120, height=60)
             img.hAlign = 'LEFT'
             elementos.append(img)
-        except:
-            pass
-    
+        except: pass
     elementos.append(Spacer(1, 40))
-
-    # 3. Título
     titulo_estilo = estilos['Title']
     titulo_estilo.fontSize = 16
     elementos.append(Paragraph("<b>PROGRAMACIÓN DE PACIENTES YODO RADIACTIVO</b>", titulo_estilo))
     elementos.append(Spacer(1, 20))
-
-    # 4. Tabla de datos
+    
+    # Convertir DF a lista para la tabla
     data = [["Nombre", "ID", "Teléfono", "Entidad", "Edad", "Diagnóstico", "Fecha Cápsula", "mCi"]]
-    for p in lista_pacientes:
-        data.append([p['n'], p['id'], p['tel'], p['ent'], p['e'], p['d'], p['fecha'], p['mci']])
+    for _, p in df.iterrows():
+        data.append([p['Nombre'], p['ID'], p['Teléfono'], p['Entidad'], p['Edad'], p['Diagnóstico'], p['Fecha Cápsula'], p['mCi']])
     
     t = Table(data, colWidths=[110, 55, 65, 70, 30, 100, 75, 45])
     t.setStyle(TableStyle([
@@ -60,98 +59,62 @@ def generar_pdf_stream(lista_pacientes, total):
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
         ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
         ('FONTSIZE', (0,0), (-1,-1), 7),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
     ]))
     elementos.append(t)
-
-    # 5. Totales con Fecha de Colombia
-    fecha_colombia = datetime.now(colombia_tz).strftime('%d/%m/%Y %H:%M')
     elementos.append(Spacer(1, 25))
     elementos.append(Paragraph(f"<b>TOTAL DOSIS SEMANAL: {total} mCi</b>", estilos['Normal']))
-    elementos.append(Paragraph(f"Reporte generado el: {fecha_colombia} (Hora Colombia)", estilos['Italic']))
-
+    elementos.append(Paragraph(f"Generado: {datetime.now(colombia_tz).strftime('%d/%m/%Y %H:%M')}", estilos['Italic']))
     doc.build(elementos)
     buffer.seek(0)
     return buffer
 
-# === INTERFAZ DE USUARIO (STREAMLIT) ===
-st.title("☢️ Gestión de Medicina Nuclear")
-st.markdown("---")
+# === INTERFAZ ===
+st.title("☢️ Gestión de Medicina Nuclear (Conectado a Drive)")
 
-st.sidebar.header("📝 Registro de Paciente")
-with st.sidebar.form("form_paciente", clear_on_submit=True):
+# Registro en Sidebar
+with st.sidebar.form("form_paciente"):
     nombre = st.text_input("Nombre Completo").upper()
-    cedula = st.text_input("Número de Identificación")
-    tel = st.text_input("Teléfono de contacto")
-    entidad = st.text_input("Entidad de Salud").upper()
-    edad = st.number_input("Edad", min_value=0, max_value=110, step=1)
-    diag = st.text_area("Diagnóstico Médico").upper()
-    
-    # Fecha de toma predeterminada a hoy en Colombia
-    fecha_cap = st.date_input("Fecha toma de cápsula", value=datetime.now(colombia_tz))
-    
-    dosis = st.number_input("Dosis Requerida (mCi)", min_value=0.0, step=0.1, format="%.1f")
-    
-    submit = st.form_submit_button("Añadir a la lista")
+    cedula = st.text_input("ID")
+    tel = st.text_input("Teléfono")
+    entidad = st.text_input("Entidad").upper()
+    edad = st.number_input("Edad", 0, 110)
+    diag = st.text_area("Diagnóstico").upper()
+    fecha_cap = st.date_input("Fecha cápsula", value=datetime.now(colombia_tz))
+    dosis = st.number_input("Dosis (mCi)", 0.0, step=0.1)
+    if st.form_submit_button("Guardar en Drive"):
+        total_actual = st.session_state.df_pacientes['mCi'].sum()
+        if total_actual + dosis > 150.0:
+            st.error("Límite excedido")
+        else:
+            nuevo_p = pd.DataFrame([{
+                "Nombre": nombre, "ID": cedula, "Teléfono": tel, "Entidad": entidad,
+                "Edad": edad, "Diagnóstico": diag, "Fecha Cápsula": fecha_cap.strftime("%d/%m/%Y"), "mCi": dosis
+            }])
+            # Actualizar Google Sheets
+            updated_df = pd.concat([st.session_state.df_pacientes, nuevo_p], ignore_index=True)
+            conn.update(data=updated_df)
+            st.session_state.df_pacientes = updated_df
+            st.rerun()
 
-if submit:
-    if not nombre or not cedula:
-        st.sidebar.error("Por favor ingrese Nombre e Identificación.")
-    elif st.session_state.total_mci + dosis > 150.0:
-        st.sidebar.error(f"❌ Límite excedido. Solo quedan {round(150.0 - st.session_state.total_mci, 2)} mCi.")
-    else:
-        nuevo_p = {
-            "n": nombre, "id": cedula, "tel": tel, "ent": entidad,
-            "e": edad, "d": diag, "fecha": fecha_cap.strftime("%d/%m/%Y"), "mci": dosis
-        }
-        st.session_state.pacientes.append(nuevo_p)
-        st.session_state.total_mci += dosis
-        st.sidebar.success(f"✅ Agregado: {nombre}")
+# Mostrar datos
+total_mci = st.session_state.df_pacientes['mCi'].sum()
+st.metric("Total Programado", f"{round(total_mci, 2)} mCi", f"{round(150-total_mci, 2)} restantes")
 
-col_stats1, col_stats2 = st.columns(2)
-with col_stats1:
-    st.metric("Total Dosis Programada", f"{round(st.session_state.total_mci, 2)} mCi")
-with col_stats2:
-    disponible = round(150.0 - st.session_state.total_mci, 2)
-    st.metric("Cupo Disponible", f"{disponible} mCi")
-
-st.subheader("📋 Lista de Pacientes")
-
-if st.session_state.pacientes:
-    h_col1, h_col2, h_col3, h_col4 = st.columns([4, 2, 2, 1])
-    h_col1.write("**Paciente**")
-    h_col2.write("**ID**")
-    h_col3.write("**Dosis**")
-    h_col4.write("**Acción**")
-    
-    for i, p in enumerate(st.session_state.pacientes):
+if not st.session_state.df_pacientes.empty:
+    for i, row in st.session_state.df_pacientes.iterrows():
         c1, c2, c3, c4 = st.columns([4, 2, 2, 1])
-        c1.write(p['n'])
-        c2.write(p['id'])
-        c3.write(f"{p['mci']} mCi")
+        c1.write(row['Nombre'])
+        c2.write(row['ID'])
+        c3.write(f"{row['mci']} mCi")
         if c4.button("🗑️", key=f"del_{i}"):
-            st.session_state.total_mci -= p['mci']
-            st.session_state.pacientes.pop(i)
+            st.session_state.df_pacientes.drop(i, inplace=True)
+            conn.update(data=st.session_state.df_pacientes)
             st.rerun()
     
-    st.markdown("---")
-    btn_col1, btn_col2 = st.columns(2)
+    pdf = generar_pdf_stream(st.session_state.df_pacientes, round(total_mci, 2))
+    st.download_button("📥 Descargar PDF", pdf, f"pedido_{datetime.now(colombia_tz).strftime('%d_%m')}.pdf", "application/pdf")
     
-    with btn_col1:
-        pdf_data = generar_pdf_stream(st.session_state.pacientes, round(st.session_state.total_mci, 2))
-        nombre_pdf = f"programacion_yodo_{datetime.now(colombia_tz).strftime('%d_%m_%Y')}.pdf"
-        st.download_button(
-            label="📥 Descargar Programación (PDF)",
-            data=pdf_data,
-            file_name=nombre_pdf,
-            mime="application/pdf",
-            use_container_width=True
-        )
-    
-    with btn_col2:
-        if st.button("🚨 Limpiar Toda la Semana", use_container_width=True):
-            st.session_state.pacientes = []
-            st.session_state.total_mci = 0.0
-            st.rerun()
-else:
-    st.info("Aún no se han ingresado pacientes.")
+    if st.button("🚨 Limpiar Todo"):
+        conn.update(data=pd.DataFrame(columns=st.session_state.df_pacientes.columns))
+        st.session_state.df_pacientes = cargar_datos()
+        st.rerun()
