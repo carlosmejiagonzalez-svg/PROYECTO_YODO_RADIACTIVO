@@ -1,29 +1,48 @@
 import streamlit as st
 import pandas as pd
+from streamlit_gsheets import GSheetsConnection
 
-# 1. Configuración básica
+# Configuración de la página
 st.set_page_config(page_title="Gestión Medicina Nuclear", layout="wide")
+
+# Conexión limpia
+try:
+    # Esta línea busca el bloque [connections.gsheets] en tus Secrets automáticamente
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    url_hoja = st.secrets["connections"]["gsheets"]["spreadsheet"]
+except Exception as e:
+    st.error(f"Error de conexión: {e}")
+
 st.title("☢️ Registro Medicina Nuclear")
 
-# 2. URL de tu hoja (Asegúrate de que termine en /export?format=csv o similar)
-# Esta es la forma más estable de conectar sin errores de credenciales
-URL_SHEET = "https://docs.google.com/spreadsheets/d/1Z1ELJYm6xq6w8HmwlCY8Qu1iHoWvH77cYNSVhcuaz9Y/gviz/tq?tqx=out:csv"
-
-# 3. Formulario Lateral
+# Formulario lateral
 with st.sidebar.form("registro_paciente", clear_on_submit=True):
     st.subheader("Nuevo Ingreso")
     nombre = st.text_input("Nombre Completo").upper()
     cedula = st.text_input("ID / Cédula")
     dosis = st.number_input("Dosis (mCi)", 0.0, step=0.1)
-    enviar = st.form_submit_button("Guardar Registro")
+    enviar = st.form_submit_button("Sincronizar Datos")
 
-# 4. Mostrar Datos
-try:
-    df = pd.read_csv(URL_SHEET)
-    st.write("### Lista de Pacientes")
-    st.dataframe(df, use_container_width=True)
-except Exception as e:
-    st.error("No se pudo cargar la base de datos. Verifica que la hoja sea pública.")
-
+# Lógica de guardado
 if enviar:
-    st.info("Para escribir datos en la hoja sin llaves, te recomiendo usar un Google Form vinculado a esta hoja o simplificar los Secrets.")
+    if nombre and cedula:
+        try:
+            df_existente = conn.read(spreadsheet=url_hoja)
+            nuevo_registro = pd.DataFrame([{"Nombre": nombre, "ID": str(cedula), "mCI": dosis}])
+            df_actualizado = pd.concat([df_existente, nuevo_registro], ignore_index=True)
+            conn.update(spreadsheet=url_hoja, data=df_actualizado)
+            st.sidebar.success(f"✅ Sincronizado: {nombre}")
+            st.cache_data.clear()
+            st.balloons()
+        except Exception as e:
+            st.sidebar.error(f"Error al guardar: {e}")
+    else:
+        st.sidebar.warning("⚠️ Completa Nombre y Cédula.")
+
+# Tabla en tiempo real
+st.write("### Lista de Pacientes")
+try:
+    df_visualizacion = conn.read(spreadsheet=url_hoja, ttl=0)
+    st.dataframe(df_visualizacion, use_container_width=True)
+except:
+    st.info("Conectando con Google Sheets...")
