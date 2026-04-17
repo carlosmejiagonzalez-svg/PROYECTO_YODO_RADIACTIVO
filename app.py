@@ -9,114 +9,88 @@ from reportlab.lib import colors
 import io
 from streamlit_gsheets import GSheetsConnection
 
-# 1. CONFIGURACIÓN DE PÁGINA
+# CONFIGURACIÓN
 st.set_page_config(page_title="Gestión Medicina Nuclear - SMQA", layout="wide")
 colombia_tz = pytz.timezone('America/Bogota')
 
-# 2. CONEXIÓN A GOOGLE SHEETS
+# CONEXIÓN
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def cargar_datos():
     try:
-        # ttl=0 asegura que traiga datos frescos
-        df = conn.read(ttl="0s")
+        # Forzamos lectura fresca ignorando el caché
+        df = conn.read(ttl=0)
         if df is not None and not df.empty:
-            # Limpiar nombres de columnas y asegurar que coincidan
             df.columns = [str(c).strip() for c in df.columns]
             return df
     except:
         pass
-    # Estructura base sin espacios en los nombres técnicos
     return pd.DataFrame(columns=["Nombre", "ID", "Entidad", "Fecha_Capsula", "mCI"])
 
-# Inicializar sesión
 if 'df_pacientes' not in st.session_state:
     st.session_state.df_pacientes = cargar_datos()
 
-# 3. FUNCIÓN REPORTE PDF
+# FUNCIÓN PDF
 def generar_pdf(df, total):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
     elementos = []
     estilos = getSampleStyleSheet()
-    
     elementos.append(Paragraph("<b>PROGRAMACIÓN DE PACIENTES - YODO 131</b>", estilos['Title']))
-    elementos.append(Paragraph("Sociedad Médico Quirúrgica del Atlántico", estilos['Normal']))
     elementos.append(Spacer(1, 20))
-    
     data = [["Nombre", "ID", "Entidad", "Fecha", "mCI"]]
     for _, p in df.iterrows():
-        data.append([
-            str(p.get('Nombre', '')), 
-            str(p.get('ID', '')), 
-            str(p.get('Entidad', '')), 
-            str(p.get('Fecha_Capsula', '')), 
-            str(p.get('mCI', '0'))
-        ])
-    
+        data.append([str(p.get('Nombre','')), str(p.get('ID','')), str(p.get('Entidad','')), str(p.get('Fecha_Capsula','')), str(p.get('mCI','0'))])
     tabla = Table(data, colWidths=[160, 80, 100, 80, 50])
-    tabla.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.darkblue),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-    ]))
-    
+    tabla.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.darkblue),('TEXTCOLOR',(0,0),(-1,0),colors.whitesmoke),('GRID',(0,0),(-1,-1),0.5,colors.grey)]))
     elementos.append(tabla)
-    elementos.append(Spacer(1, 20))
-    elementos.append(Paragraph(f"<b>TOTAL DOSIS SEMANAL: {total} mCi</b>", estilos['Normal']))
     doc.build(elementos)
     buffer.seek(0)
     return buffer
 
-# 4. INTERFAZ
+# INTERFAZ
 st.title("☢️ Control de Medicina Nuclear - Atlántico")
 
-with st.sidebar.form("registro_paciente", clear_on_submit=True):
+with st.sidebar.form("registro", clear_on_submit=True):
     st.header("Registrar Paciente")
-    nombre_in = st.text_input("Nombre Completo").upper()
-    cedula_in = st.text_input("Cédula / ID")
-    entidad_in = st.text_input("Entidad (EPS)").upper()
-    dosis_in = st.number_input("Dosis (mCi)", 0.0, step=0.1)
-    fecha_in = st.date_input("Fecha de Cápsula", value=datetime.now(colombia_tz))
+    nombre = st.text_input("Nombre Completo").upper()
+    cedula = st.text_input("Cédula / ID")
+    entidad = st.text_input("Entidad").upper()
+    dosis = st.number_input("Dosis (mCi)", 0.0, step=0.1)
+    fecha = st.date_input("Fecha de Cápsula", value=datetime.now(colombia_tz))
     
     if st.form_submit_button("Sincronizar con Google Sheets"):
-        if nombre_in and cedula_in:
-            nuevo_paciente = pd.DataFrame([{
-                "Nombre": nombre_in, 
-                "ID": cedula_in, 
-                "Entidad": entidad_in, 
-                "Fecha_Capsula": fecha_in.strftime("%d/%m/%Y"), 
-                "mCI": dosis_in
+        if nombre and cedula:
+            # 1. Crear el nuevo registro
+            nuevo = pd.DataFrame([{
+                "Nombre": nombre, "ID": cedula, "Entidad": entidad, 
+                "Fecha_Capsula": fecha.strftime("%d/%m/%Y"), "mCI": dosis
             }])
             
-            st.session_state.df_pacientes = pd.concat([st.session_state.df_pacientes, nuevo_paciente], ignore_index=True)
+            # 2. Actualizar la lista local
+            st.session_state.df_pacientes = pd.concat([st.session_state.df_pacientes, nuevo], ignore_index=True)
             
             try:
-                # Sincronizar
+                # 3. INTENTO DE ESCRITURA FORZADA
                 conn.update(data=st.session_state.df_pacientes)
                 st.sidebar.success("✅ ¡Sincronizado!")
-                st.cache_data.clear()
+                st.cache_data.clear() # Limpiar memoria de Streamlit
             except Exception as e:
-                st.sidebar.error(f"⚠️ Error: {e}")
-            
+                st.sidebar.error(f"Error: {e}")
             st.rerun()
 
-# 5. VISUALIZACIÓN
-df_display = st.session_state.df_pacientes.copy()
-df_display['mCI'] = pd.to_numeric(df_display['mCI'], errors='coerce').fillna(0)
-total_acumulado = df_display['mCI'].sum()
+# MOSTRAR
+df_v = st.session_state.df_pacientes.copy()
+df_v['mCI'] = pd.to_numeric(df_v['mCI'], errors='coerce').fillna(0)
+total = df_v['mCI'].sum()
 
-st.metric("Total Dosis Programada", f"{total_acumulado} mCi")
+st.metric("Total Dosis", f"{total} mCi")
+st.dataframe(df_v, use_container_width=True, hide_index=True)
 
-if not df_display.empty:
-    st.dataframe(df_display, use_container_width=True, hide_index=True)
-    pdf_reporte = generar_pdf(df_display, total_acumulado)
-    st.download_button("📥 Descargar Reporte PDF", pdf_reporte, "programacion.pdf", use_container_width=True)
-    
-    if st.button("🗑️ Borrar lista local"):
-        st.session_state.df_pacientes = pd.DataFrame(columns=["Nombre", "ID", "Entidad", "Fecha_Capsula", "mCI"])
-        st.rerun()
-else:
-    st.info("No hay pacientes registrados.")
+if not df_v.empty:
+    pdf = generar_pdf(df_v, total)
+    st.download_button("📥 Descargar Reporte PDF", pdf, "programacion.pdf", use_container_width=True)
+
+if st.button("🗑️ Resetear lista (Solo local)"):
+    st.session_state.df_pacientes = pd.DataFrame(columns=["Nombre", "ID", "Entidad", "Fecha_Capsula", "mCI"])
+    st.rerun()
