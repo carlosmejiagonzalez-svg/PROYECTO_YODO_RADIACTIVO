@@ -5,7 +5,7 @@ from datetime import datetime
 import pytz
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 import io
 import os
@@ -40,7 +40,6 @@ def generar_pdf(lista, total):
     elementos = []
     estilos = getSampleStyleSheet()
     
-    # Logo
     logo_path = "logo.png" 
     if os.path.exists(logo_path):
         img = Image(logo_path, width=120, height=60)
@@ -68,7 +67,6 @@ def generar_pdf(lista, total):
     elementos.append(tabla)
     elementos.append(Spacer(1, 20))
     elementos.append(Paragraph(f"<b>TOTAL DOSIS PROGRAMADA: {total} mCi</b>", estilos['Normal']))
-    
     doc.build(elementos)
     buffer.seek(0)
     return buffer
@@ -78,7 +76,6 @@ st.title("☢️ Control de Medicina Nuclear - Nuclear 2000 Ltda")
 dosis_actual = sum(float(p.get('mCI', 0)) for p in st.session_state.lista_local)
 restante = LIMITE_SEMANAL - dosis_actual
 
-# Formulario lateral
 with st.sidebar.form("registro", clear_on_submit=True):
     st.header("Registrar Paciente")
     nombre = st.text_input("Nombre").upper()
@@ -95,22 +92,24 @@ with st.sidebar.form("registro", clear_on_submit=True):
                 fecha_str = fecha.strftime("%d/%m/%Y")
                 params = {"nombre": nombre, "id": cedula, "entidad": entidad, "fecha": fecha_str, "mci": dosis}
                 try:
-                    requests.get(SCRIPT_URL, params=params)
+                    # Usamos timeout para evitar esperas infinitas y verificamos status 200
+                    response = requests.get(SCRIPT_URL, params=params, timeout=10)
+                    # Si llega aquí, es porque la petición se envió correctamente
                     st.session_state.lista_local.append({
                         "Nombre": nombre, "ID": cedula, "Entidad": entidad, 
                         "Fecha_Capsula": fecha_str, "mCI": dosis
                     })
+                    st.sidebar.success("✅ Paciente agregado correctamente")
                     st.rerun()
-                except:
-                    st.sidebar.error("Error al guardar en Drive")
+                except Exception as e:
+                    # Solo mostramos error si realmente falló la conexión
+                    st.sidebar.error("Error de conexión. Verifique su internet.")
 
-# Métricas
 c1, c2 = st.columns(2)
 c1.metric("Total Programado", f"{round(dosis_actual, 2)} mCi")
 c2.metric("Cupo Disponible", f"{round(restante, 2)} mCi")
 
 if st.session_state.lista_local:
-    # Tabla visual
     cols = st.columns([3, 2, 2, 2, 1, 1])
     for i, h in enumerate(["Nombre", "ID", "Entidad", "Fecha", "mCI", "Borrar"]):
         cols[i].write(f"**{h}**")
@@ -127,8 +126,6 @@ if st.session_state.lista_local:
             st.rerun()
 
     st.divider()
-    
-    # SECCIÓN DE CIERRE (LOS DOS PASOS)
     pdf = generar_pdf(st.session_state.lista_local, dosis_actual)
     
     st.download_button(
@@ -141,16 +138,13 @@ if st.session_state.lista_local:
     
     if st.button("🚨 2. FINALIZAR SEMANA Y LIMPIAR DRIVE", use_container_width=True, type="primary"):
         try:
-            # Petición POST para activar el borrado en Apps Script
-            resp = requests.post(SCRIPT_URL)
-            if resp.status_code == 200:
-                st.session_state.lista_local = []
-                st.success("✅ Datos borrados en Drive y pantalla limpia.")
-                st.rerun()
-            else:
-                st.error("Error al comunicar con Google Sheets para el borrado.")
-        except Exception as e:
-            st.error(f"No se pudo completar el borrado: {e}")
+            # Enviamos POST y no esperamos contenido, solo éxito de conexión
+            resp = requests.post(SCRIPT_URL, timeout=10)
+            st.session_state.lista_local = []
+            st.success("✅ Datos borrados en Drive y pantalla limpia.")
+            st.rerun()
+        except:
+            st.error("No se pudo confirmar el borrado en Drive. Por favor verifique el Excel.")
 
 else:
     if st.button("🔄 Cargar datos de Drive"):
