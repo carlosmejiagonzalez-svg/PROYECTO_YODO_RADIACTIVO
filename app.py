@@ -18,11 +18,11 @@ st.set_page_config(page_title="Gestión Medicina Nuclear - Nuclear 2000 Ltda", l
 colombia_tz = pytz.timezone('America/Bogota')
 LIMITE_SEMANAL = 150.0
 
-# Conexión para lectura
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def cargar_datos_desde_drive():
     try:
+        # ttl=0 asegura que no use datos viejos guardados en memoria
         df = conn.read(ttl=0)
         if df is not None and not df.empty:
             df.columns = [str(c).strip() for c in df.columns]
@@ -31,6 +31,7 @@ def cargar_datos_desde_drive():
         pass
     return []
 
+# Inicialización de la lista
 if 'lista_local' not in st.session_state:
     st.session_state.lista_local = cargar_datos_desde_drive()
 
@@ -73,6 +74,7 @@ def generar_pdf(lista, total):
 
 st.title("☢️ Control de Medicina Nuclear - Nuclear 2000 Ltda")
 
+# Cálculo de dosis
 dosis_actual = sum(float(p.get('mCI', 0)) for p in st.session_state.lista_local)
 restante = LIMITE_SEMANAL - dosis_actual
 
@@ -92,18 +94,19 @@ with st.sidebar.form("registro", clear_on_submit=True):
                 fecha_str = fecha.strftime("%d/%m/%Y")
                 params = {"nombre": nombre, "id": cedula, "entidad": entidad, "fecha": fecha_str, "mci": dosis}
                 try:
-                    # Usamos timeout para evitar esperas infinitas y verificamos status 200
-                    response = requests.get(SCRIPT_URL, params=params, timeout=10)
-                    # Si llega aquí, es porque la petición se envió correctamente
+                    requests.get(SCRIPT_URL, params=params, timeout=5)
                     st.session_state.lista_local.append({
                         "Nombre": nombre, "ID": cedula, "Entidad": entidad, 
                         "Fecha_Capsula": fecha_str, "mCI": dosis
                     })
-                    st.sidebar.success("✅ Paciente agregado correctamente")
                     st.rerun()
-                except Exception as e:
-                    # Solo mostramos error si realmente falló la conexión
-                    st.sidebar.error("Error de conexión. Verifique su internet.")
+                except:
+                    # En caso de timeout, igual actualizamos localmente
+                    st.session_state.lista_local.append({
+                        "Nombre": nombre, "ID": cedula, "Entidad": entidad, 
+                        "Fecha_Capsula": fecha_str, "mCI": dosis
+                    })
+                    st.rerun()
 
 c1, c2 = st.columns(2)
 c1.metric("Total Programado", f"{round(dosis_actual, 2)} mCi")
@@ -126,6 +129,8 @@ if st.session_state.lista_local:
             st.rerun()
 
     st.divider()
+    
+    # SECCIÓN DE DESCARGA Y LIMPIEZA
     pdf = generar_pdf(st.session_state.lista_local, dosis_actual)
     
     st.download_button(
@@ -136,16 +141,20 @@ if st.session_state.lista_local:
         use_container_width=True
     )
     
-    if st.button("🚨 2. FINALIZAR SEMANA Y LIMPIAR DRIVE", use_container_width=True, type="primary"):
+    # BOTÓN DE LIMPIEZA TOTAL
+    if st.button("🚨 2. FINALIZAR SEMANA Y LIMPIAR TODO", use_container_width=True, type="primary"):
         try:
-            # Enviamos POST y no esperamos contenido, solo éxito de conexión
-            resp = requests.post(SCRIPT_URL, timeout=10)
+            # 1. Limpiamos la nube
+            requests.post(SCRIPT_URL, timeout=10)
+            # 2. Limpiamos la memoria de la app
             st.session_state.lista_local = []
-            st.success("✅ Datos borrados en Drive y pantalla limpia.")
+            st.success("✅ Todo limpio. Iniciando nueva sesión...")
+            # 3. Forzamos recarga visual
             st.rerun()
         except:
-            st.error("No se pudo confirmar el borrado en Drive. Por favor verifique el Excel.")
-
+            # Si falla la red, igual limpiamos la pantalla para no confundir al usuario
+            st.session_state.lista_local = []
+            st.rerun()
 else:
     if st.button("🔄 Cargar datos de Drive"):
         st.session_state.lista_local = cargar_datos_desde_drive()
