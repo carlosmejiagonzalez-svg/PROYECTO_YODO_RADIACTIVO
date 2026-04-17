@@ -7,7 +7,6 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER
 import io
 import os
 from streamlit_gsheets import GSheetsConnection
@@ -19,6 +18,7 @@ st.set_page_config(page_title="Gestión Medicina Nuclear - Nuclear 2000 Ltda", l
 colombia_tz = pytz.timezone('America/Bogota')
 LIMITE_SEMANAL = 150.0
 
+# Conexión para lectura
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def cargar_datos_desde_drive():
@@ -40,16 +40,7 @@ def generar_pdf(lista, total):
     elementos = []
     estilos = getSampleStyleSheet()
     
-    # Estilo personalizado para el título
-    estilo_titulo = ParagraphStyle(
-        'CustomTitle',
-        parent=estilos['Title'],
-        fontSize=16,
-        spaceAfter=10
-    )
-
-    # --- INSERTAR LOGO ---
-    # Busca un archivo llamado logo.png en tu repositorio de GitHub
+    # Logo
     logo_path = "logo.png" 
     if os.path.exists(logo_path):
         img = Image(logo_path, width=120, height=60)
@@ -57,7 +48,7 @@ def generar_pdf(lista, total):
         elementos.append(img)
         elementos.append(Spacer(1, 10))
 
-    elementos.append(Paragraph("<b>PROGRAMACIÓN DE PACIENTES - YODO 131</b>", estilo_titulo))
+    elementos.append(Paragraph("<b>PROGRAMACIÓN DE PACIENTES - YODO 131</b>", estilos['Title']))
     elementos.append(Paragraph("<font size=12>Nuclear 2000 Ltda</font>", estilos['Normal']))
     elementos.append(Spacer(1, 20))
     
@@ -73,16 +64,10 @@ def generar_pdf(lista, total):
         ('GRID',(0,0),(-1,-1),0.5,colors.grey),
         ('ALIGN',(0,0),(-1,-1),'CENTER'),
         ('FONTSIZE',(0,0),(-1,-1),10),
-        ('BOTTOMPADDING', (0,0), (-1,0), 12),
     ]))
     elementos.append(tabla)
     elementos.append(Spacer(1, 20))
     elementos.append(Paragraph(f"<b>TOTAL DOSIS PROGRAMADA: {total} mCi</b>", estilos['Normal']))
-    
-    # Pie de página con fecha de generación
-    fecha_gen = datetime.now(colombia_tz).strftime("%d/%m/%Y %H:%M")
-    elementos.append(Spacer(1, 30))
-    elementos.append(Paragraph(f"<font size=8>Reporte generado el: {fecha_gen}</font>", estilos['Normal']))
     
     doc.build(elementos)
     buffer.seek(0)
@@ -93,11 +78,12 @@ st.title("☢️ Control de Medicina Nuclear - Nuclear 2000 Ltda")
 dosis_actual = sum(float(p.get('mCI', 0)) for p in st.session_state.lista_local)
 restante = LIMITE_SEMANAL - dosis_actual
 
+# Formulario lateral
 with st.sidebar.form("registro", clear_on_submit=True):
     st.header("Registrar Paciente")
     nombre = st.text_input("Nombre").upper()
     cedula = st.text_input("ID")
-    entidad = st.text_input("Entidad (EPS)").upper()
+    entidad = st.text_input("Entidad").upper()
     dosis = st.number_input("Dosis (mCi)", 0.0, step=0.1)
     fecha = st.date_input("Fecha", value=datetime.now(colombia_tz))
     
@@ -116,17 +102,18 @@ with st.sidebar.form("registro", clear_on_submit=True):
                     })
                     st.rerun()
                 except:
-                    st.sidebar.error("Error de conexión con Drive")
+                    st.sidebar.error("Error al guardar en Drive")
 
+# Métricas
 c1, c2 = st.columns(2)
 c1.metric("Total Programado", f"{round(dosis_actual, 2)} mCi")
-c2.metric("Cupo Disponible", f"{round(restante, 2)} mCi", delta_color="normal" if restante > 0 else "inverse")
+c2.metric("Cupo Disponible", f"{round(restante, 2)} mCi")
 
 if st.session_state.lista_local:
-    # Tabla visual en la app
+    # Tabla visual
     cols = st.columns([3, 2, 2, 2, 1, 1])
-    h = ["Nombre", "ID", "Entidad", "Fecha", "mCI", "Borrar"]
-    for i, texto in enumerate(h): cols[i].write(f"**{texto}**")
+    for i, h in enumerate(["Nombre", "ID", "Entidad", "Fecha", "mCI", "Borrar"]):
+        cols[i].write(f"**{h}**")
 
     for idx, p in enumerate(st.session_state.lista_local):
         r = st.columns([3, 2, 2, 2, 1, 1])
@@ -140,21 +127,31 @@ if st.session_state.lista_local:
             st.rerun()
 
     st.divider()
+    
+    # SECCIÓN DE CIERRE (LOS DOS PASOS)
     pdf = generar_pdf(st.session_state.lista_local, dosis_actual)
     
-    if st.download_button(
-        label="📥 Descargar Reporte PDF y LIMPIAR TODO",
+    st.download_button(
+        label="📥 1. Descargar Reporte PDF",
         data=pdf,
         file_name=f"reporte_nuclear2000_{datetime.now(colombia_tz).strftime('%d_%m_%Y')}.pdf",
         mime="application/pdf",
         use_container_width=True
-    ):
+    )
+    
+    if st.button("🚨 2. FINALIZAR SEMANA Y LIMPIAR DRIVE", use_container_width=True, type="primary"):
         try:
-            requests.post(SCRIPT_URL)
-            st.session_state.lista_local = []
-            st.rerun()
-        except:
-            st.error("Reporte descargado, pero limpie Drive manualmente.")
+            # Petición POST para activar el borrado en Apps Script
+            resp = requests.post(SCRIPT_URL)
+            if resp.status_code == 200:
+                st.session_state.lista_local = []
+                st.success("✅ Datos borrados en Drive y pantalla limpia.")
+                st.rerun()
+            else:
+                st.error("Error al comunicar con Google Sheets para el borrado.")
+        except Exception as e:
+            st.error(f"No se pudo completar el borrado: {e}")
+
 else:
     if st.button("🔄 Cargar datos de Drive"):
         st.session_state.lista_local = cargar_datos_desde_drive()
