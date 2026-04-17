@@ -2,4 +2,3 @@ streamlit
 pandas
 pytz
 reportlab
-streamlit-gsheets
