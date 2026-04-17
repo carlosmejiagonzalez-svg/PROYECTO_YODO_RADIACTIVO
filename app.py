@@ -1,34 +1,21 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
-import pytz
 from streamlit_gsheets import GSheetsConnection
 
-# --- CONFIGURACIÓN ---
+# Configuración de página
 st.set_page_config(page_title="Gestión Medicina Nuclear", layout="wide")
-colombia_tz = pytz.timezone('America/Bogota')
 
-# --- CONEXIÓN FORZADA (Nombre nuevo para evitar caché) ---
+# --- CONEXIÓN ---
+# 'hoja_nuclear' debe coincidir exactamente con el nombre en los Secrets
 conn = st.connection("hoja_nuclear", type=GSheetsConnection)
 
-def cargar_datos():
-    try:
-        # Forzamos lectura total
-        df = conn.read(ttl=0)
-        if df is not None and not df.empty:
-            df.columns = [str(c).strip() for c in df.columns]
-            return df
-    except:
-        pass
-    return pd.DataFrame(columns=["Nombre", "ID", "mCI"])
+# URL de tu Excel (la misma que ya tienes)
+URL_EXCEL = "https://docs.google.com/spreadsheets/d/1Z1ELJYm6xq6w8HmwlCY8Qu1iHoWvH77cYNSVhcuaz9Y/edit"
 
-if 'df_pacientes' not in st.session_state:
-    st.session_state.df_pacientes = cargar_datos()
+st.title("☢️ Registro Medicina Nuclear")
 
-st.title("☢️ Registro de Pacientes")
-
-# --- FORMULARIO ---
-with st.sidebar.form("registro_nuclear", clear_on_submit=True):
+# --- FORMULARIO DE REGISTRO ---
+with st.sidebar.form("registro_paciente", clear_on_submit=True):
     st.subheader("Nuevo Ingreso")
     nombre = st.text_input("Nombre Completo").upper()
     cedula = st.text_input("ID / Cédula")
@@ -37,34 +24,41 @@ with st.sidebar.form("registro_nuclear", clear_on_submit=True):
 
 if enviar:
     if nombre and cedula:
-        # Crear DataFrame con el nuevo paciente
-        nuevo_p = pd.DataFrame([{
-            "Nombre": nombre, 
-            "ID": str(cedula), 
-            "mCI": dosis
-        }])
-        
-        # Unir al estado actual
-        st.session_state.df_pacientes = pd.concat([st.session_state.df_pacientes, nuevo_p], ignore_index=True)
-        
         try:
-            # Intentar actualización
-            conn.update(data=st.session_state.df_pacientes)
+            # 1. Leer datos actuales del Excel
+            df_existente = conn.read(spreadsheet=URL_EXCEL)
+            
+            # 2. Crear el nuevo registro
+            nuevo_registro = pd.DataFrame([{
+                "Nombre": nombre, 
+                "ID": str(cedula), 
+                "mCI": dosis
+            }])
+            
+            # 3. Concatenar (unir) lo viejo con lo nuevo
+            df_actualizado = pd.concat([df_existente, nuevo_registro], ignore_index=True)
+            
+            # 4. Subir todo de nuevo al Excel
+            conn.update(spreadsheet=URL_EXCEL, data=df_actualizado)
+            
             st.sidebar.success(f"✅ ¡Sincronizado!: {nombre}")
-            st.cache_data.clear()
+            st.balloons()
+            st.cache_data.clear() # Limpiar memoria para ver el cambio
         except Exception as e:
-            st.sidebar.error(f"Fallo de conexión: {e}")
-        
-        st.rerun()
+            st.sidebar.error(f"❌ Error al sincronizar: {e}")
+    else:
+        st.sidebar.warning("⚠️ Por favor llena Nombre y Cédula")
 
-# --- TABLA DE DATOS ---
-st.write("### Datos en la Hoja de Cálculo")
-if not st.session_state.df_pacientes.empty:
-    st.dataframe(st.session_state.df_pacientes, use_container_width=True)
-else:
-    st.info("No hay pacientes registrados aún.")
+# --- VISUALIZACIÓN DE DATOS ---
+st.write("### Lista de Pacientes en tiempo real")
+try:
+    # Leer sin usar caché para ver los cambios de inmediato (ttl=0)
+    df_visualizacion = conn.read(spreadsheet=URL_EXCEL, ttl=0)
+    st.dataframe(df_visualizacion, use_container_width=True)
+except Exception as e:
+    st.info("Conectando con la base de datos de Google...")
 
-# Botón para limpiar la vista local si es necesario
-if st.button("Limpiar Vista Local"):
-    st.session_state.df_pacientes = pd.DataFrame(columns=["Nombre", "ID", "mCI"])
+# Botón para forzar recarga
+if st.button("🔄 Actualizar Tabla"):
+    st.cache_data.clear()
     st.rerun()
