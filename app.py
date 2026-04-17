@@ -22,7 +22,6 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 def cargar_datos_desde_drive():
     try:
-        # ttl=0 asegura que no use datos viejos guardados en memoria
         df = conn.read(ttl=0)
         if df is not None and not df.empty:
             df.columns = [str(c).strip() for c in df.columns]
@@ -31,7 +30,6 @@ def cargar_datos_desde_drive():
         pass
     return []
 
-# Inicialización de la lista
 if 'lista_local' not in st.session_state:
     st.session_state.lista_local = cargar_datos_desde_drive()
 
@@ -74,7 +72,6 @@ def generar_pdf(lista, total):
 
 st.title("☢️ Control de Medicina Nuclear - Nuclear 2000 Ltda")
 
-# Cálculo de dosis
 dosis_actual = sum(float(p.get('mCI', 0)) for p in st.session_state.lista_local)
 restante = LIMITE_SEMANAL - dosis_actual
 
@@ -93,20 +90,21 @@ with st.sidebar.form("registro", clear_on_submit=True):
             else:
                 fecha_str = fecha.strftime("%d/%m/%Y")
                 params = {"nombre": nombre, "id": cedula, "entidad": entidad, "fecha": fecha_str, "mci": dosis}
+                
+                # AGREGAMOS SOLO UNA VEZ:
+                # Primero lo guardamos en la lista visual
+                st.session_state.lista_local.append({
+                    "Nombre": nombre, "ID": cedula, "Entidad": entidad, 
+                    "Fecha_Capsula": fecha_str, "mCI": dosis
+                })
+                
+                # Luego intentamos enviarlo a la nube de forma silenciosa
                 try:
                     requests.get(SCRIPT_URL, params=params, timeout=5)
-                    st.session_state.lista_local.append({
-                        "Nombre": nombre, "ID": cedula, "Entidad": entidad, 
-                        "Fecha_Capsula": fecha_str, "mCI": dosis
-                    })
-                    st.rerun()
                 except:
-                    # En caso de timeout, igual actualizamos localmente
-                    st.session_state.lista_local.append({
-                        "Nombre": nombre, "ID": cedula, "Entidad": entidad, 
-                        "Fecha_Capsula": fecha_str, "mCI": dosis
-                    })
-                    st.rerun()
+                    pass
+                
+                st.rerun()
 
 c1, c2 = st.columns(2)
 c1.metric("Total Programado", f"{round(dosis_actual, 2)} mCi")
@@ -129,8 +127,6 @@ if st.session_state.lista_local:
             st.rerun()
 
     st.divider()
-    
-    # SECCIÓN DE DESCARGA Y LIMPIEZA
     pdf = generar_pdf(st.session_state.lista_local, dosis_actual)
     
     st.download_button(
@@ -141,20 +137,16 @@ if st.session_state.lista_local:
         use_container_width=True
     )
     
-    # BOTÓN DE LIMPIEZA TOTAL
     if st.button("🚨 2. FINALIZAR SEMANA Y LIMPIAR TODO", use_container_width=True, type="primary"):
         try:
-            # 1. Limpiamos la nube
+            # Orden de limpieza a la nube
             requests.post(SCRIPT_URL, timeout=10)
-            # 2. Limpiamos la memoria de la app
-            st.session_state.lista_local = []
-            st.success("✅ Todo limpio. Iniciando nueva sesión...")
-            # 3. Forzamos recarga visual
-            st.rerun()
         except:
-            # Si falla la red, igual limpiamos la pantalla para no confundir al usuario
-            st.session_state.lista_local = []
-            st.rerun()
+            pass
+        
+        # Limpieza inmediata de la pantalla
+        st.session_state.lista_local = []
+        st.rerun()
 else:
     if st.button("🔄 Cargar datos de Drive"):
         st.session_state.lista_local = cargar_datos_desde_drive()
