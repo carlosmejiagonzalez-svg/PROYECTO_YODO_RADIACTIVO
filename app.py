@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
+import math
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from reportlab.lib.styles import getSampleStyleSheet
@@ -14,9 +15,12 @@ from streamlit_gsheets import GSheetsConnection
 # URL de tu Google Apps Script
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz8FcolZ346Fg3pL_yU1WPpMh4T2NHrR0t0HhAm-0VBDJbrZ7fO78jTKEVcrnfCK54/exec"
 
-st.set_page_config(page_title="Gestión Medicina Nuclear - Nuclear 2000 Ltda", layout="wide")
+st.set_page_config(page_title="Nuclear 2000 Ltda - Gestión Avanzada", layout="wide")
 colombia_tz = pytz.timezone('America/Bogota')
 LIMITE_SEMANAL = 150.0
+
+# Constante de decaimiento Yodo-131 (Vida media ~8.02 días)
+HL_YODO = 8.02 
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -32,6 +36,12 @@ def cargar_datos_desde_drive():
 
 if 'lista_local' not in st.session_state:
     st.session_state.lista_local = cargar_datos_desde_drive()
+
+def calcular_decaimiento(actividad_inicial, horas_transcurridas):
+    # Fórmula: A = A0 * e^(-ln(2) * t / t_1/2)
+    # Convertimos vida media a horas para precisión
+    hl_horas = HL_YODO * 24
+    return actividad_inicial * math.exp(-math.log(2) * horas_transcurridas / hl_horas)
 
 def generar_pdf(lista, total):
     buffer = io.BytesIO()
@@ -70,84 +80,119 @@ def generar_pdf(lista, total):
     buffer.seek(0)
     return buffer
 
-st.title("☢️ Control de Medicina Nuclear - Nuclear 2000 Ltda")
+# --- INTERFAZ PRINCIPAL ---
+st.title("☢️ Gestión de Medicina Nuclear - Nuclear 2000 Ltda")
 
+# Definición de Pestañas
+tab1, tab2, tab3 = st.tabs(["📋 Programación y Pedidos", "📦 Inventario y Reasignación", "🧮 Calculadora de Decaimiento"])
+
+# Cálculos globales
 dosis_actual = sum(float(p.get('mCI', 0)) for p in st.session_state.lista_local)
 restante = LIMITE_SEMANAL - dosis_actual
 
-with st.sidebar.form("registro", clear_on_submit=True):
-    st.header("Registrar Paciente")
-    nombre = st.text_input("Nombre").upper()
-    cedula = st.text_input("ID")
-    entidad = st.text_input("Entidad").upper()
-    dosis = st.number_input("Dosis (mCi)", 0.0, step=0.1)
-    fecha = st.date_input("Fecha", value=datetime.now(colombia_tz))
-    
-    if st.form_submit_button("Sincronizar con Drive"):
-        if nombre and cedula:
-            if (dosis_actual + dosis) > LIMITE_SEMANAL:
-                st.sidebar.error(f"Límite superado. Cupo: {restante} mCi")
-            else:
-                fecha_str = fecha.strftime("%d/%m/%Y")
-                params = {"nombre": nombre, "id": cedula, "entidad": entidad, "fecha": fecha_str, "mci": dosis}
-                
-                # AGREGAMOS SOLO UNA VEZ:
-                # Primero lo guardamos en la lista visual
-                st.session_state.lista_local.append({
-                    "Nombre": nombre, "ID": cedula, "Entidad": entidad, 
-                    "Fecha_Capsula": fecha_str, "mCI": dosis
-                })
-                
-                # Luego intentamos enviarlo a la nube de forma silenciosa
-                try:
-                    requests.get(SCRIPT_URL, params=params, timeout=5)
-                except:
-                    pass
-                
-                st.rerun()
+# --- TAB 1: PROGRAMACIÓN ---
+with tab1:
+    with st.sidebar.form("registro", clear_on_submit=True):
+        st.header("Registrar Paciente")
+        nombre = st.text_input("Nombre").upper()
+        cedula = st.text_input("ID")
+        entidad = st.text_input("Entidad").upper()
+        dosis = st.number_input("Dosis (mCi)", 0.0, step=0.1)
+        fecha = st.date_input("Fecha de Aplicación", value=datetime.now(colombia_tz))
+        
+        if st.form_submit_button("Sincronizar Pedido"):
+            if nombre and cedula:
+                if (dosis_actual + dosis) > LIMITE_SEMANAL:
+                    st.sidebar.error(f"Límite superado. Cupo: {restante} mCi")
+                else:
+                    fecha_str = fecha.strftime("%d/%m/%Y")
+                    params = {"nombre": nombre, "id": cedula, "entidad": entidad, "fecha": fecha_str, "mci": dosis}
+                    st.session_state.lista_local.append({
+                        "Nombre": nombre, "ID": cedula, "Entidad": entidad, 
+                        "Fecha": fecha_str, "mCI": dosis, "Estado": "PENDIENTE"
+                    })
+                    try: requests.get(SCRIPT_URL, params=params, timeout=5)
+                    except: pass
+                    st.rerun()
 
-c1, c2 = st.columns(2)
-c1.metric("Total Programado", f"{round(dosis_actual, 2)} mCi")
-c2.metric("Cupo Disponible", f"{round(restante, 2)} mCi")
+    c1, c2 = st.columns(2)
+    c1.metric("Total Programado", f"{round(dosis_actual, 2)} mCi")
+    c2.metric("Cupo Disponible", f"{round(restante, 2)} mCi")
 
-if st.session_state.lista_local:
-    cols = st.columns([3, 2, 2, 2, 1, 1])
-    for i, h in enumerate(["Nombre", "ID", "Entidad", "Fecha", "mCI", "Borrar"]):
-        cols[i].write(f"**{h}**")
-
-    for idx, p in enumerate(st.session_state.lista_local):
-        r = st.columns([3, 2, 2, 2, 1, 1])
-        r[0].write(p.get('Nombre'))
-        r[1].write(p.get('ID'))
-        r[2].write(p.get('Entidad'))
-        r[3].write(p.get('Fecha_Capsula') or p.get('Fecha'))
-        r[4].write(p.get('mCI'))
-        if r[5].button("🗑️", key=f"del_{idx}"):
-            st.session_state.lista_local.pop(idx)
+    if st.session_state.lista_local:
+        df_prog = pd.DataFrame(st.session_state.lista_local)
+        st.dataframe(df_prog[["Nombre", "ID", "Entidad", "Fecha", "mCI", "Estado"]], use_container_width=True)
+        
+        pdf = generar_pdf(st.session_state.lista_local, dosis_actual)
+        st.download_button("📥 Descargar Reporte para Pedido", data=pdf, 
+                           file_name=f"pedido_nuclear2000_{datetime.now(colombia_tz).strftime('%d_%m_%Y')}.pdf",
+                           use_container_width=True)
+        
+        if st.button("🚨 FINALIZAR SEMANA (Borrar Todo)", type="primary"):
+            try: requests.post(SCRIPT_URL, timeout=10)
+            except: pass
+            st.session_state.lista_local = []
             st.rerun()
 
-    st.divider()
-    pdf = generar_pdf(st.session_state.lista_local, dosis_actual)
+# --- TAB 2: INVENTARIO Y REASIGNACIÓN ---
+with tab2:
+    st.header("Gestión de Dosis Recibidas")
+    if not st.session_state.lista_local:
+        st.info("No hay dosis activas para gestionar.")
+    else:
+        for idx, p in enumerate(st.session_state.lista_local):
+            with st.expander(f"📍 {p['Nombre']} - {p['mCI']} mCi ({p['Estado']})"):
+                col_a, col_b, col_c = st.columns(3)
+                
+                # Acciones de Estado
+                nuevo_estado = col_a.selectbox("Cambiar Estado", 
+                                             ["PENDIENTE", "RECIBIDO", "APLICADO", "CANCELADO", "DECAIMIENTO"],
+                                             index=["PENDIENTE", "RECIBIDO", "APLICADO", "CANCELADO", "DECAIMIENTO"].index(p['Estado']),
+                                             key=f"st_{idx}")
+                
+                if col_a.button("Actualizar", key=f"btn_st_{idx}"):
+                    st.session_state.lista_local[idx]['Estado'] = nuevo_estado
+                    st.success(f"Estado de {p['Nombre']} actualizado.")
+                    st.rerun()
+
+                # Reasignación
+                if p['Estado'] == "CANCELADO":
+                    st.warning("Paciente canceló. Reasignar dosis a:")
+                    nuevo_p = col_b.text_input("Nombre Nuevo Paciente", key=f"reas_{idx}")
+                    nueva_id = col_b.text_input("ID Nuevo Paciente", key=f"id_reas_{idx}")
+                    if col_b.button("Confirmar Reasignación", key=f"btn_reas_{idx}"):
+                        st.session_state.lista_local[idx]['Nombre'] = nuevo_p.upper()
+                        st.session_state.lista_local[idx]['ID'] = nueva_id
+                        st.session_state.lista_local[idx]['Estado'] = "RECIBIDO"
+                        st.session_state.lista_local[idx]['Notas'] = f"Reasignado de {p['Nombre']}"
+                        st.rerun()
+
+# --- TAB 3: CALCULADORA DE DECAIMIENTO ---
+with tab3:
+    st.header("Calculadora de Decaimiento (Yodo-131)")
+    col1, col2 = st.columns(2)
     
-    st.download_button(
-        label="📥 1. Descargar Reporte PDF",
-        data=pdf,
-        file_name=f"reporte_nuclear2000_{datetime.now(colombia_tz).strftime('%d_%m_%Y')}.pdf",
-        mime="application/pdf",
-        use_container_width=True
-    )
+    act_inicial = col1.number_input("Actividad Inicial (mCi)", 0.0, 500.0, 50.0)
+    fecha_inicial = col1.date_input("Fecha de Medición Inicial", datetime.now(colombia_tz))
+    hora_inicial = col1.time_input("Hora de Medición Inicial")
     
-    if st.button("🚨 2. FINALIZAR SEMANA Y LIMPIAR TODO", use_container_width=True, type="primary"):
-        try:
-            # Orden de limpieza a la nube
-            requests.post(SCRIPT_URL, timeout=10)
-        except:
-            pass
-        
-        # Limpieza inmediata de la pantalla
-        st.session_state.lista_local = []
-        st.rerun()
-else:
+    fecha_final = col2.date_input("Fecha a Consultar", datetime.now(colombia_tz) + timedelta(days=1))
+    hora_final = col2.time_input("Hora a Consultar")
+    
+    # Cálculo de tiempo transcurrido
+    dt_inicial = datetime.combine(fecha_inicial, hora_inicial)
+    dt_final = datetime.combine(fecha_final, hora_final)
+    diferencia = dt_final - dt_inicial
+    horas_transcurridas = diferencia.total_seconds() / 3600
+    
+    if horas_transcurridas < 0:
+        st.error("La fecha de consulta debe ser posterior a la inicial.")
+    else:
+        act_final = calcular_decaimiento(act_inicial, horas_transcurridas)
+        st.metric("Actividad Resultante", f"{round(act_final, 2)} mCi")
+        st.info(f"Tiempo transcurrido: {round(horas_transcurridas/24, 2)} días")
+
+if not st.session_state.lista_local:
     if st.button("🔄 Cargar datos de Drive"):
         st.session_state.lista_local = cargar_datos_desde_drive()
         st.rerun()
