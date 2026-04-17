@@ -1,48 +1,78 @@
 import streamlit as st
 import pandas as pd
-from streamlit_gsheets import GSheetsConnection
+from fpdf import FPDF
+from datetime import datetime
 
-# Configuración de la página
-st.set_page_config(page_title="Gestión Medicina Nuclear", layout="wide")
+# 1. Configuración de la Página
+st.set_page_config(page_title="Generador PDF - Medicina Nuclear", page_icon="☢️")
 
-# Conexión limpia
-try:
-    # Esta línea busca el bloque [connections.gsheets] en tus Secrets automáticamente
-    conn = st.connection("gsheets", type=GSheetsConnection)
-    url_hoja = st.secrets["connections"]["gsheets"]["spreadsheet"]
-except Exception as e:
-    st.error(f"Error de conexión: {e}")
+# 2. Clase para el Formato del PDF
+class PDF(FPDF):
+    def header(self):
+        self.set_font('Arial', 'B', 15)
+        self.cell(0, 10, 'SOCIEDAD MÉDICO QUIRÚRGICA DEL ATLÁNTICO', 0, 1, 'C')
+        self.set_font('Arial', 'I', 10)
+        self.cell(0, 10, 'Departamento de Medicina Nuclear', 0, 1, 'C')
+        self.ln(10)
 
-st.title("☢️ Registro Medicina Nuclear")
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.cell(0, 10, f'Página {self.page_no()}', 0, 0, 'C')
 
-# Formulario lateral
-with st.sidebar.form("registro_paciente", clear_on_submit=True):
-    st.subheader("Nuevo Ingreso")
-    nombre = st.text_input("Nombre Completo").upper()
-    cedula = st.text_input("ID / Cédula")
-    dosis = st.number_input("Dosis (mCi)", 0.0, step=0.1)
-    enviar = st.form_submit_button("Sincronizar Datos")
+# 3. Interfaz de Usuario
+st.title("☢️ Registro y Generación de PDF")
+st.write("Ingresa los datos del paciente para generar el reporte instantáneo.")
 
-# Lógica de guardado
-if enviar:
+with st.container():
+    col1, col2 = st.columns(2)
+    with col1:
+        nombre = st.text_input("Nombre del Paciente").upper()
+        cedula = st.text_input("Cédula / ID")
+    with col2:
+        estudio = st.selectbox("Tipo de Estudio", ["Gammagrafía Ósea", "Gammagrafía Renal", "SPECT Cardiaco", "Otro"])
+        dosis = st.number_input("Dosis Administrada (mCi)", min_value=0.0, step=0.1)
+
+# 4. Botón para Generar PDF
+if st.button("Generar Reporte PDF"):
     if nombre and cedula:
-        try:
-            df_existente = conn.read(spreadsheet=url_hoja)
-            nuevo_registro = pd.DataFrame([{"Nombre": nombre, "ID": str(cedula), "mCI": dosis}])
-            df_actualizado = pd.concat([df_existente, nuevo_registro], ignore_index=True)
-            conn.update(spreadsheet=url_hoja, data=df_actualizado)
-            st.sidebar.success(f"✅ Sincronizado: {nombre}")
-            st.cache_data.clear()
-            st.balloons()
-        except Exception as e:
-            st.sidebar.error(f"Error al guardar: {e}")
-    else:
-        st.sidebar.warning("⚠️ Completa Nombre y Cédula.")
+        # Crear PDF en memoria
+        pdf = PDF()
+        pdf.add_page()
+        pdf.set_font("Arial", size=12)
+        
+        # Contenido del reporte
+        pdf.cell(200, 10, txt=f"Fecha: {datetime.now().strftime('%d/%m/%Y')}", ln=True)
+        pdf.ln(5)
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(200, 10, txt="DATOS DEL PACIENTE", ln=True)
+        pdf.set_font("Arial", size=12)
+        pdf.cell(200, 10, txt=f"Nombre: {nombre}", ln=True)
+        pdf.cell(200, 10, txt=f"Identificación: {cedula}", ln=True)
+        pdf.ln(5)
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(200, 10, txt="DETALLES DEL PROCEDIMIENTO", ln=True)
+        pdf.set_font("Arial", size=12)
+        pdf.cell(200, 10, txt=f"Estudio: {estudio}", ln=True)
+        pdf.cell(200, 10, txt=f"Dosis: {dosis} mCi", ln=True)
+        
+        pdf.ln(20)
+        pdf.cell(200, 10, txt="_" * 30, ln=True, align='C')
+        pdf.cell(200, 10, txt="Firma Responsable", ln=True, align='C')
 
-# Tabla en tiempo real
-st.write("### Lista de Pacientes")
-try:
-    df_visualizacion = conn.read(spreadsheet=url_hoja, ttl=0)
-    st.dataframe(df_visualizacion, use_container_width=True)
-except:
-    st.info("Conectando con Google Sheets...")
+        # Convertir a bytes para descarga
+        pdf_output = pdf.output(dest='S').encode('latin-1')
+        
+        st.success("¡PDF Generado con éxito!")
+        st.download_button(
+            label="⬇️ Descargar Reporte",
+            data=pdf_output,
+            file_name=f"Reporte_{cedula}.pdf",
+            mime="application/pdf"
+        )
+    else:
+        st.error("Por favor completa los datos del paciente.")
+
+# 5. Tabla Local (Opcional - solo para ver lo que has hecho en la sesión)
+st.divider()
+st.info("Nota: Esta versión genera documentos individuales. No requiere conexión a base de datos externa.")
