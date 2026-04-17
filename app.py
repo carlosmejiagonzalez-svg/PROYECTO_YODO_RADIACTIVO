@@ -1,20 +1,13 @@
 import streamlit as st
 import pandas as pd
-from streamlit_gsheets import GSheetsConnection
 
-# 1. Configuración de la interfaz
+# 1. Configuración básica
 st.set_page_config(page_title="Gestión Medicina Nuclear", layout="wide")
-
-# 2. Conexión Estable
-# Al no pasarle argumentos manuales aquí, evitamos el error de 'multiple values'
-try:
-    conn = st.connection("gsheets", type=GSheetsConnection)
-    # Obtenemos la URL directamente de la sección de conexiones en secrets
-    url_hoja = st.secrets["connections"]["gsheets"]["spreadsheet"]
-except Exception as e:
-    st.error(f"Error de configuración inicial: {e}")
-
 st.title("☢️ Registro Medicina Nuclear")
+
+# 2. URL de tu hoja (Asegúrate de que termine en /export?format=csv o similar)
+# Esta es la forma más estable de conectar sin errores de credenciales
+URL_SHEET = "https://docs.google.com/spreadsheets/d/1Z1ELJYm6xq6w8HmwlCY8Qu1iHoWvH77cYNSVhcuaz9Y/gviz/tq?tqx=out:csv"
 
 # 3. Formulario Lateral
 with st.sidebar.form("registro_paciente", clear_on_submit=True):
@@ -22,43 +15,15 @@ with st.sidebar.form("registro_paciente", clear_on_submit=True):
     nombre = st.text_input("Nombre Completo").upper()
     cedula = st.text_input("ID / Cédula")
     dosis = st.number_input("Dosis (mCi)", 0.0, step=0.1)
-    enviar = st.form_submit_button("Sincronizar Datos")
+    enviar = st.form_submit_button("Guardar Registro")
 
-# 4. Lógica de Guardado
-if enviar:
-    if nombre and cedula:
-        try:
-            # Leemos la base de datos actual
-            df_existente = conn.read(spreadsheet=url_hoja)
-            
-            # Creamos el nuevo registro
-            nuevo_registro = pd.DataFrame([{
-                "Nombre": nombre, 
-                "ID": str(cedula), 
-                "mCI": dosis
-            }])
-            
-            # Concatenamos y actualizamos la hoja
-            df_actualizado = pd.concat([df_existente, nuevo_registro], ignore_index=True)
-            conn.update(spreadsheet=url_hoja, data=df_actualizado)
-            
-            st.sidebar.success(f"✅ Sincronizado correctamente: {nombre}")
-            st.balloons()
-            st.cache_data.clear()
-        except Exception as e:
-            st.sidebar.error(f"❌ Error al sincronizar con Google Sheets: {e}")
-    else:
-        st.sidebar.warning("⚠️ El nombre y la cédula son campos obligatorios.")
-
-# 5. Visualización de la Tabla
-st.write("### Lista de Pacientes (Tiempo Real)")
+# 4. Mostrar Datos
 try:
-    # Usamos ttl=0 para que siempre traiga los datos más frescos
-    df_visualizacion = conn.read(spreadsheet=url_hoja, ttl=0)
-    st.dataframe(df_visualizacion, use_container_width=True)
-except:
-    st.info("Esperando conexión con la base de datos de Google...")
+    df = pd.read_csv(URL_SHEET)
+    st.write("### Lista de Pacientes")
+    st.dataframe(df, use_container_width=True)
+except Exception as e:
+    st.error("No se pudo cargar la base de datos. Verifica que la hoja sea pública.")
 
-if st.button("🔄 Forzar Recarga"):
-    st.cache_data.clear()
-    st.rerun()
+if enviar:
+    st.info("Para escribir datos en la hoja sin llaves, te recomiendo usar un Google Form vinculado a esta hoja o simplificar los Secrets.")
