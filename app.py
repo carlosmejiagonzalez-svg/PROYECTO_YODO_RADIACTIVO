@@ -5,27 +5,29 @@ from streamlit_gsheets import GSheetsConnection
 # 1. Configuración de la página
 st.set_page_config(page_title="Gestión Medicina Nuclear", layout="wide")
 
-# 2. Preparación de credenciales y conexión
+# 2. Preparación de la conexión
 try:
-    # URL guardada en los Secrets de Streamlit
+    # URL de los Secrets
     url_hoja = st.secrets["URL_HOJA"]
     
-    # Diccionario de credenciales (usando la llave plana de los Secrets)
-    creds_config = {
-        "project_id": "app-medicina-nuclear",
-        "private_key_id": "c4de8fdb3341822fd79fe12a88c3c6faf6178171",
-        "private_key": st.secrets["PRIVATE_KEY_PLANA"].replace('\\n', '\n'),
-        "client_email": "robot-medicina@app-medicina-nuclear.iam.gserviceaccount.com",
-        "client_id": "113833402702332306124",
-        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-        "token_uri": "https://oauth2.googleapis.com/token",
-        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-        "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/robot-medicina%40app-medicina-nuclear.iam.gserviceaccount.com"
+    # Estructuramos las credenciales según lo requiere la librería
+    # Metemos todo dentro de la llave 'service_account'
+    config_final = {
+        "service_account": {
+            "project_id": "app-medicina-nuclear",
+            "private_key_id": "c4de8fdb3341822fd79fe12a88c3c6faf6178171",
+            "private_key": st.secrets["PRIVATE_KEY_PLANA"].replace('\\n', '\n'),
+            "client_email": "robot-medicina@app-medicina-nuclear.iam.gserviceaccount.com",
+            "client_id": "113833402702332306124",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/robot-medicina%40app-medicina-nuclear.iam.gserviceaccount.com"
+        }
     }
 
-    # Creamos la conexión. 
-    # Pasamos las credenciales desglosadas con ** para evitar duplicar el argumento 'type'
-    conn = st.connection("hoja_nuclear", type=GSheetsConnection, **creds_config)
+    # Creamos la conexión pasando el diccionario de configuración
+    conn = st.connection("hoja_nuclear", type=GSheetsConnection, **config_final)
     
 except Exception as e:
     st.error(f"Error en la configuración de credenciales: {e}")
@@ -69,7 +71,7 @@ if enviar:
 # 5. Visualización de la tabla
 st.write("### Lista de Pacientes en tiempo real")
 try:
-    # ttl=0 para que siempre lea lo más nuevo
+    # ttl=0 para lectura inmediata
     df_visualizacion = conn.read(spreadsheet=url_hoja, ttl=0)
     st.dataframe(df_visualizacion, use_container_width=True)
 except Exception as e:
