@@ -8,44 +8,51 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 import io
+from streamlit_gsheets import GSheetsConnection
 
-# --- CONFIGURACIÓN DE PÁGINA ---
+# --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Programación Yodo Radiactivo", layout="wide")
 colombia_tz = pytz.timezone('America/Bogota')
 RUTA_LOGO = "logo.png"
 
-# --- LÓGICA DE DATOS LOCALES ---
-# Inicializar la lista en la sesión del navegador si no existe
-if 'df_pacientes' not in st.session_state:
-    st.session_state.df_pacientes = pd.DataFrame(columns=[
-        "Nombre", "ID", "Teléfono", "Entidad", "Edad", "Diagnóstico", "Fecha Cápsula", "mCI"
-    ])
+# --- CONEXIÓN SIMPLIFICADA ---
+# Al ser pública, solo necesita la URL que pusiste en Secrets
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- FUNCIÓN PARA GENERAR EL PDF ---
+def cargar_datos():
+    try:
+        # Intentamos leer la hoja
+        df = conn.read(ttl="0s")
+        if df is not None and not df.empty:
+            df.columns = [str(c).strip() for c in df.columns]
+            return df
+    except Exception as e:
+        st.error(f"Error al conectar con la hoja: {e}")
+    return pd.DataFrame(columns=["Nombre", "ID", "Teléfono", "Entidad", "Edad", "Diagnóstico", "Fecha Cápsula", "mCI"])
+
+if 'df_pacientes' not in st.session_state:
+    st.session_state.df_pacientes = cargar_datos()
+
+# --- FUNCIÓN PDF (ReportLab) ---
 def generar_pdf_stream(df, total):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, leftMargin=30, rightMargin=30, topMargin=30)
     elementos = []
     estilos = getSampleStyleSheet()
 
-    # Agregar Logo si existe
     if os.path.exists(RUTA_LOGO):
         try:
             img = Image(RUTA_LOGO, width=120, height=60)
             img.hAlign = 'LEFT'
             elementos.append(img)
-        except Exception:
-            pass
+        except: pass
     
-    elementos.append(Spacer(1, 40))
-    
-    # Título
+    elementos.append(Spacer(1, 30))
     titulo_estilo = estilos['Title']
     titulo_estilo.fontSize = 16
     elementos.append(Paragraph("<b>PROGRAMACIÓN DE PACIENTES YODO RADIACTIVO</b>", titulo_estilo))
     elementos.append(Spacer(1, 20))
 
-    # Tabla de Datos para el PDF
     data = [["Nombre", "ID", "Teléfono", "Entidad", "Edad", "Diagnóstico", "Fecha Cápsula", "mCI"]]
     for _, p in df.iterrows():
         data.append([
@@ -63,87 +70,61 @@ def generar_pdf_stream(df, total):
         ('FONTSIZE', (0,0), (-1,-1), 7),
     ]))
     elementos.append(t)
-    
-    # Pie de página con el total
-    elementos.append(Spacer(1, 25))
-    elementos.append(Paragraph(f"<b>TOTAL DOSIS SEMANAL: {total} mCi</b>", estilos['Normal']))
-    elementos.append(Paragraph(f"Generado el: {datetime.now(colombia_tz).strftime('%d/%m/%Y %H:%M')}", estilos['Italic']))
-    
+    elementos.append(Spacer(1, 20))
+    elementos.append(Paragraph(f"<b>TOTAL DOSIS: {total} mCi</b>", estilos['Normal']))
     doc.build(elementos)
     buffer.seek(0)
     return buffer
 
-# --- INTERFAZ DE USUARIO ---
-st.title("☢️ Gestión de Medicina Nuclear - Local")
+# --- INTERFAZ ---
+st.title("☢️ Gestión Medicina Nuclear - Barranquilla")
 
 with st.sidebar.form("form_paciente", clear_on_submit=True):
-    st.subheader("Registrar Paciente")
+    st.subheader("Nuevo Registro")
     nombre = st.text_input("Nombre Completo").upper()
     cedula = st.text_input("ID / Cédula")
     tel = st.text_input("Teléfono")
-    entidad = st.text_input("Entidad (EPS)").upper()
+    entidad = st.text_input("Entidad").upper()
     edad = st.number_input("Edad", 0, 110)
     diag = st.text_area("Diagnóstico").upper()
     fecha_cap = st.date_input("Fecha de Cápsula", value=datetime.now(colombia_tz))
     dosis = st.number_input("Dosis (mCi)", 0.0, step=0.1)
-    submit = st.form_submit_button("Añadir a Programación")
+    submit = st.form_submit_button("Guardar")
 
 if submit:
-    if not nombre or not cedula:
-        st.sidebar.error("Error: El Nombre y el ID son obligatorios.")
-    else:
-        # Crear el nuevo registro
-        nuevo_registro = pd.DataFrame([{
-            "Nombre": nombre, "ID": cedula, "Teléfono": tel, "Entidad": entidad,
-            "Edad": edad, "Diagnóstico": diag, "Fecha Cápsula": fecha_cap.strftime("%d/%m/%Y"), 
-            "mCI": dosis
-        }])
-        
-        # Actualizar la lista en memoria (Sesión)
-        st.session_state.df_pacientes = pd.concat([st.session_state.df_pacientes, nuevo_registro], ignore_index=True)
-        st.sidebar.success(f"✅ Añadido a la lista: {nombre}")
-        st.rerun()
+    if nombre and cedula:
+        if dosis > 150.0:
+            st.sidebar.error("Límite excedido (Máx 150 mCi)")
+        else:
+            nuevo = pd.DataFrame([{
+                "Nombre": nombre, "ID": cedula, "Teléfono": tel, "Entidad": entidad,
+                "Edad": edad, "Diagnóstico": diag, "Fecha Cápsula": fecha_cap.strftime("%d/%m/%Y"), 
+                "mCI": dosis
+            }])
+            st.session_state.df_pacientes = pd.concat([st.session_state.df_pacientes, nuevo], ignore_index=True)
+            try:
+                # Sincronizar con la hoja pública
+                conn.update(data=st.session_state.df_pacientes)
+                st.sidebar.success("Sincronizado con Google Sheets")
+            except Exception as e:
+                st.sidebar.warning(f"Guardado localmente. Error sync: {e}")
+            st.rerun()
 
-# --- VISUALIZACIÓN Y CÁLCULOS ---
-total_mci = 0.0
+# --- TABLA Y PDF ---
+total_mci = pd.to_numeric(st.session_state.df_pacientes['mCI'], errors='coerce').sum()
+st.metric("Total Programado", f"{round(total_mci, 2)} mCi", f"{round(150-total_mci, 2)} disponibles")
+
 if not st.session_state.df_pacientes.empty:
-    # Asegurar que mCI sea numérico para la suma
-    total_mci = pd.to_numeric(st.session_state.df_pacientes['mCI'], errors='coerce').sum()
-
-# Indicadores principales
-c_met1, c_met2 = st.columns(2)
-c_met1.metric("Total Dosis Programada", f"{round(total_mci, 2)} mCi")
-c_met2.metric("Capacidad Restante (de 150mCi)", f"{round(150 - total_mci, 2)} mCi")
-
-# Tabla interactiva en la App
-if not st.session_state.df_pacientes.empty:
-    st.subheader("Pacientes en la Programación Actual")
-    
-    # Mostrar registros con botón de eliminar
     for i, row in st.session_state.df_pacientes.iterrows():
-        col_n, col_i, col_d, col_b = st.columns([4, 2, 2, 1])
-        col_n.write(row['Nombre'])
-        col_i.write(row['ID'])
-        col_d.write(f"{row.get('mCI', 0)} mCi")
-        
-        if col_b.button("🗑️", key=f"btn_del_{i}"):
+        c1, c2, c3, c4 = st.columns([4, 2, 2, 1])
+        c1.write(row['Nombre'])
+        c2.write(row['ID'])
+        c3.write(f"{row.get('mCI', 0)} mCi")
+        if c4.button("🗑️", key=f"del_{i}"):
             st.session_state.df_pacientes = st.session_state.df_pacientes.drop(i).reset_index(drop=True)
+            try: conn.update(data=st.session_state.df_pacientes)
+            except: pass
             st.rerun()
     
-    st.divider()
-    
-    # Botón para descargar el PDF
-    pdf_file = generar_pdf_stream(st.session_state.df_pacientes, round(total_mci, 2))
-    st.download_button(
-        label="📥 Descargar Reporte PDF para Impresión",
-        data=pdf_file,
-        file_name=f"programacion_yodo_{datetime.now(colombia_tz).strftime('%d_%m_%Y')}.pdf",
-        mime="application/pdf",
-        use_container_width=True
-    )
-    
-    if st.button("🔴 Borrar toda la lista"):
-        st.session_state.df_pacientes = pd.DataFrame(columns=st.session_state.df_pacientes.columns)
-        st.rerun()
-else:
-    st.info("No hay pacientes registrados en la programación de esta semana.")
+    pdf = generar_pdf_stream(st.session_state.df_pacientes, round(total_mci, 2))
+    st.download_button("📥 Descargar Reporte PDF", pdf, "programacion.pdf", use_container_width=True)
