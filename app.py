@@ -1,85 +1,141 @@
 import streamlit as st
 import pandas as pd
-from fpdf import FPDF
+import os
 from datetime import datetime
+import pytz
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Image, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
+import io
+from streamlit_gsheets import GSheetsConnection
 
-# 1. Configuración de la Página
-st.set_page_config(page_title="Programación Yodo-131", page_icon="☢️", layout="wide")
+# --- CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(page_title="Programación Yodo Radiactivo", layout="wide")
+colombia_tz = pytz.timezone('America/Bogota')
+RUTA_LOGO = "logo.png"
 
-# Inicializamos la lista de pacientes en la memoria de la sesión
-if 'lista_yodo' not in st.session_state:
-    st.session_state.lista_yodo = []
+# --- CONEXIÓN A GOOGLE SHEETS ---
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-# 2. Clase para el PDF
-class PDF(FPDF):
-    def header(self):
-        self.set_font('Arial', 'B', 16)
-        self.cell(0, 10, 'PROGRAMACIÓN DE PACIENTES - YODO 131', 0, 1, 'C')
-        self.ln(10)
+def cargar_datos():
+    try:
+        # Forzamos la lectura desde la pestaña Sheet1
+        df = conn.read(worksheet="Sheet1", ttl="0s")
+        if df is not None and not df.empty:
+            # Limpiamos espacios en blanco en los nombres de las columnas
+            df.columns = [str(c).strip() for c in df.columns]
+            return df
+    except Exception:
+        pass
+    # Estructura base si el Excel está vacío o falla la conexión
+    return pd.DataFrame(columns=["Nombre", "ID", "Teléfono", "Entidad", "Edad", "Diagnóstico", "Fecha Cápsula", "mCI"])
 
-# 3. Interfaz de Usuario
-st.title("📋 Gestión de Tratamientos Yodo-131")
-st.warning("⚠️ Recordatorio de Seguridad: La dosis máxima permitida es de 150 mCi.")
+# Inicializar estado de la sesión
+if 'df_pacientes' not in st.session_state:
+    st.session_state.df_pacientes = cargar_datos()
 
-with st.sidebar:
-    st.header("Registrar Paciente")
-    with st.form("registro", clear_on_submit=True):
-        nombre = st.text_input("Nombre del Paciente").upper()
-        cedula = st.text_input("Identificación / Cédula")
-        dosis = st.number_input("Dosis Programada (mCi)", min_value=0.0, step=1.0)
-        fecha_tratamiento = st.date_input("Fecha del Tratamiento")
-        
-        if st.form_submit_button("Añadir a la Lista"):
-            # VALIDACIÓN DE DOSIS
-            if dosis > 150.0:
-                st.error(f"❌ ERROR: La dosis de {dosis} mCi excede el límite de 150 mCi.")
-            elif nombre and cedula:
-                paciente = {
-                    "Fecha": fecha_tratamiento.strftime('%d/%m/%Y'),
-                    "Paciente": nombre,
-                    "Cédula": cedula,
-                    "Dosis (mCi)": dosis
-                }
-                st.session_state.lista_yodo.append(paciente)
-                st.success(f"Registrado: {nombre}")
-            else:
-                st.warning("⚠️ Completa Nombre y Cédula")
+# --- FUNCIÓN PDF ---
+def generar_pdf_stream(df, total):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, leftMargin=30, rightMargin=30, topMargin=30)
+    elementos = []
+    estilos = getSampleStyleSheet()
 
-# 4. Tabla de Programación Visual
-if st.session_state.lista_yodo:
-    df = pd.DataFrame(st.session_state.lista_yodo)
-    st.write("### Listado de Programación Actual")
-    st.table(df)
-
-    # 5. Generación de PDF
-    if st.button("📥 Descargar Lista en PDF"):
-        pdf = PDF()
-        pdf.add_page()
-        pdf.set_font("Arial", 'B', 12)
-        pdf.cell(35, 10, "Fecha", 1)
-        pdf.cell(80, 10, "Paciente", 1)
-        pdf.cell(40, 10, "Cédula", 1)
-        pdf.cell(30, 10, "mCi", 1)
-        pdf.ln()
-        
-        pdf.set_font("Arial", size=11)
-        for p in st.session_state.lista_yodo:
-            pdf.cell(35, 10, p['Fecha'], 1)
-            pdf.cell(80, 10, p['Paciente'], 1)
-            pdf.cell(40, 10, p['Cédula'], 1)
-            pdf.cell(30, 10, str(p['Dosis (mCi)']), 1)
-            pdf.ln()
-            
-        pdf_bytes = pdf.output(dest='S').encode('latin-1')
-        st.download_button(
-            label="Confirmar Descarga",
-            data=pdf_bytes,
-            file_name=f"Programacion_Yodo_{datetime.now().strftime('%d_%m_%Y')}.pdf",
-            mime="application/pdf"
-        )
+    if os.path.exists(RUTA_LOGO):
+        try:
+            img = Image(RUTA_LOGO, width=120, height=60)
+            img.hAlign = 'LEFT'
+            elementos.append(img)
+        except: pass
     
-    if st.button("🗑️ Vaciar Lista"):
-        st.session_state.lista_yodo = []
+    elementos.append(Spacer(1, 40))
+    titulo_estilo = estilos['Title']
+    titulo_estilo.fontSize = 16
+    elementos.append(Paragraph("<b>PROGRAMACIÓN DE PACIENTES YODO RADIACTIVO</b>", titulo_estilo))
+    elementos.append(Spacer(1, 20))
+
+    data = [["Nombre", "ID", "Teléfono", "Entidad", "Edad", "Diagnóstico", "Fecha Cápsula", "mCI"]]
+    for _, p in df.iterrows():
+        data.append([
+            str(p.get('Nombre', '')), str(p.get('ID', '')), str(p.get('Teléfono', '')),
+            str(p.get('Entidad', '')), str(p.get('Edad', '')), str(p.get('Diagnóstico', '')),
+            str(p.get('Fecha Cápsula', '')), str(p.get('mCI', '0'))
+        ])
+    
+    t = Table(data, colWidths=[110, 55, 65, 70, 30, 100, 75, 45])
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.darkblue),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+        ('FONTSIZE', (0,0), (-1,-1), 7),
+    ]))
+    elementos.append(t)
+    elementos.append(Spacer(1, 25))
+    elementos.append(Paragraph(f"<b>TOTAL DOSIS SEMANAL: {total} mCi</b>", estilos['Normal']))
+    elementos.append(Paragraph(f"Generado: {datetime.now(colombia_tz).strftime('%d/%m/%Y %H:%M')}", estilos['Italic']))
+    doc.build(elementos)
+    buffer.seek(0)
+    return buffer
+
+# --- INTERFAZ ---
+st.title("☢️ Gestión de Medicina Nuclear")
+
+with st.sidebar.form("form_paciente", clear_on_submit=True):
+    st.subheader("Nuevo Registro")
+    nombre = st.text_input("Nombre Completo").upper()
+    cedula = st.text_input("ID")
+    tel = st.text_input("Teléfono")
+    entidad = st.text_input("Entidad").upper()
+    edad = st.number_input("Edad", 0, 110)
+    diag = st.text_area("Diagnóstico").upper()
+    fecha_cap = st.date_input("Fecha cápsula", value=datetime.now(colombia_tz))
+    dosis = st.number_input("Dosis (mCi)", 0.0, step=0.1)
+    submit = st.form_submit_button("Guardar Paciente")
+
+if submit:
+    if not nombre or not cedula:
+        st.sidebar.error("Nombre e ID requeridos.")
+    else:
+        nuevo_p = pd.DataFrame([{
+            "Nombre": nombre, "ID": cedula, "Teléfono": tel, "Entidad": entidad,
+            "Edad": edad, "Diagnóstico": diag, "Fecha Cápsula": fecha_cap.strftime("%d/%m/%Y"), 
+            "mCI": dosis
+        }])
+        
+        # Combinar con datos existentes
+        st.session_state.df_pacientes = pd.concat([st.session_state.df_pacientes, nuevo_p], ignore_index=True)
+        
+        try:
+            # Sincronización con Google Sheets
+            conn.update(data=st.session_state.df_pacientes, worksheet="Sheet1")
+            st.sidebar.success(f"✅ Sincronizado: {nombre}")
+        except Exception as e:
+            st.sidebar.warning(f"⚠️ Guardado local (Error: {e})")
+        
         st.rerun()
-else:
-    st.info("La lista está vacía.")
+
+# --- TABLA Y MÉTRICAS ---
+total_mci = 0.0
+if not st.session_state.df_pacientes.empty:
+    total_mci = pd.to_numeric(st.session_state.df_pacientes['mCI'], errors='coerce').sum()
+
+st.metric("Total Programado", f"{round(total_mci, 2)} mCi", f"{round(150-total_mci, 2)} disponibles")
+
+if not st.session_state.df_pacientes.empty:
+    for i, row in st.session_state.df_pacientes.iterrows():
+        c1, c2, c3, c4 = st.columns([4, 2, 2, 1])
+        c1.write(row['Nombre'])
+        c2.write(row['ID'])
+        c3.write(f"{row.get('mCI', 0)} mCi")
+        if c4.button("🗑️", key=f"del_{i}"):
+            st.session_state.df_pacientes = st.session_state.df_pacientes.drop(i).reset_index(drop=True)
+            try:
+                conn.update(data=st.session_state.df_pacientes, worksheet="Sheet1")
+            except: pass
+            st.rerun()
+    
+    st.divider()
+    pdf = generar_pdf_stream(st.session_state.df_pacientes, round(total_mci, 2))
+    st.download_button("📥 Descargar PDF", pdf, f"pedido_{datetime.now(colombia_tz).strftime('%d_%m')}.pdf", use_container_width=True)
