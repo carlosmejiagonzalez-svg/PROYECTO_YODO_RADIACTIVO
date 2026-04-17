@@ -10,7 +10,7 @@ from reportlab.lib import colors
 import io
 from streamlit_gsheets import GSheetsConnection
 
-# --- CONFIGURACIÓN DE PÁGINA ---
+# --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Programación Yodo Radiactivo", layout="wide")
 colombia_tz = pytz.timezone('America/Bogota')
 RUTA_LOGO = "logo.png"
@@ -20,18 +20,15 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 def cargar_datos():
     try:
-        # Forzamos la lectura desde la pestaña Sheet1
-        df = conn.read(worksheet="Sheet1", ttl="0s")
-        if df is not None and not df.empty:
-            # Limpiamos espacios en blanco en los nombres de las columnas
+        df = conn.read(ttl="0s")
+        if df is not None:
             df.columns = [str(c).strip() for c in df.columns]
             return df
-    except Exception:
+    except:
         pass
-    # Estructura base si el Excel está vacío o falla la conexión
     return pd.DataFrame(columns=["Nombre", "ID", "Teléfono", "Entidad", "Edad", "Diagnóstico", "Fecha Cápsula", "mCI"])
 
-# Inicializar estado de la sesión
+# Inicializar la lista en la sesión del navegador
 if 'df_pacientes' not in st.session_state:
     st.session_state.df_pacientes = cargar_datos()
 
@@ -83,7 +80,6 @@ def generar_pdf_stream(df, total):
 st.title("☢️ Gestión de Medicina Nuclear")
 
 with st.sidebar.form("form_paciente", clear_on_submit=True):
-    st.subheader("Nuevo Registro")
     nombre = st.text_input("Nombre Completo").upper()
     cedula = st.text_input("ID")
     tel = st.text_input("Teléfono")
@@ -92,34 +88,37 @@ with st.sidebar.form("form_paciente", clear_on_submit=True):
     diag = st.text_area("Diagnóstico").upper()
     fecha_cap = st.date_input("Fecha cápsula", value=datetime.now(colombia_tz))
     dosis = st.number_input("Dosis (mCi)", 0.0, step=0.1)
-    submit = st.form_submit_button("Guardar Paciente")
+    submit = st.form_submit_button("Guardar en Lista")
 
 if submit:
     if not nombre or not cedula:
-        st.sidebar.error("Nombre e ID requeridos.")
+        st.sidebar.error("Ingrese Nombre e ID.")
     else:
+        # 1. Creamos el nuevo registro
         nuevo_p = pd.DataFrame([{
             "Nombre": nombre, "ID": cedula, "Teléfono": tel, "Entidad": entidad,
             "Edad": edad, "Diagnóstico": diag, "Fecha Cápsula": fecha_cap.strftime("%d/%m/%Y"), 
             "mCI": dosis
         }])
         
-        # Combinar con datos existentes
+        # 2. IMPORTANTE: Agregamos a la lista actual de la sesión
         st.session_state.df_pacientes = pd.concat([st.session_state.df_pacientes, nuevo_p], ignore_index=True)
         
+        # 3. Intentamos guardar en Drive (si falla, no borra la lista de la web)
         try:
-            # Sincronización con Google Sheets
-            conn.update(data=st.session_state.df_pacientes, worksheet="Sheet1")
+            conn.update(data=st.session_state.df_pacientes)
             st.sidebar.success(f"✅ Sincronizado: {nombre}")
-        except Exception as e:
-            st.sidebar.warning(f"⚠️ Guardado local (Error: {e})")
+        except:
+            st.sidebar.warning("⚠️ Guardado en lista local (Sin conexión a Drive)")
         
         st.rerun()
 
-# --- TABLA Y MÉTRICAS ---
+# --- CÁLCULOS Y TABLA ---
 total_mci = 0.0
 if not st.session_state.df_pacientes.empty:
-    total_mci = pd.to_numeric(st.session_state.df_pacientes['mCI'], errors='coerce').sum()
+    # Aseguramos que la columna se llame mCI
+    if 'mCI' in st.session_state.df_pacientes.columns:
+        total_mci = st.session_state.df_pacientes['mCI'].sum()
 
 st.metric("Total Programado", f"{round(total_mci, 2)} mCi", f"{round(150-total_mci, 2)} disponibles")
 
@@ -132,7 +131,7 @@ if not st.session_state.df_pacientes.empty:
         if c4.button("🗑️", key=f"del_{i}"):
             st.session_state.df_pacientes = st.session_state.df_pacientes.drop(i).reset_index(drop=True)
             try:
-                conn.update(data=st.session_state.df_pacientes, worksheet="Sheet1")
+                conn.update(data=st.session_state.df_pacientes)
             except: pass
             st.rerun()
     
