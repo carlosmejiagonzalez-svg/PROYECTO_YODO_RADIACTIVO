@@ -8,32 +8,18 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 import io
-from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Programación Yodo Radiactivo", layout="wide")
 colombia_tz = pytz.timezone('America/Bogota')
 RUTA_LOGO = "logo.png"
 
-# --- CONEXIÓN A GOOGLE SHEETS ---
-conn = st.connection("gsheets", type=GSheetsConnection)
-
-def cargar_datos():
-    try:
-        # Lee los datos actuales del Excel
-        df = conn.read(ttl="0s")
-        if df is not None:
-            # Limpia espacios en los nombres de las columnas
-            df.columns = [str(c).strip() for c in df.columns]
-            return df
-    except Exception:
-        pass
-    # Si falla o está vacío, crea un DataFrame con la estructura correcta
-    return pd.DataFrame(columns=["Nombre", "ID", "Teléfono", "Entidad", "Edad", "Diagnóstico", "Fecha Cápsula", "mCI"])
-
-# Inicializar el estado de la sesión para evitar que se borren los datos al recargar
+# --- LÓGICA DE DATOS LOCALES ---
+# Inicializar la lista en la sesión del navegador si no existe
 if 'df_pacientes' not in st.session_state:
-    st.session_state.df_pacientes = cargar_datos()
+    st.session_state.df_pacientes = pd.DataFrame(columns=[
+        "Nombre", "ID", "Teléfono", "Entidad", "Edad", "Diagnóstico", "Fecha Cápsula", "mCI"
+    ])
 
 # --- FUNCIÓN PARA GENERAR EL PDF ---
 def generar_pdf_stream(df, total):
@@ -59,7 +45,7 @@ def generar_pdf_stream(df, total):
     elementos.append(Paragraph("<b>PROGRAMACIÓN DE PACIENTES YODO RADIACTIVO</b>", titulo_estilo))
     elementos.append(Spacer(1, 20))
 
-    # Tabla de Datos
+    # Tabla de Datos para el PDF
     data = [["Nombre", "ID", "Teléfono", "Entidad", "Edad", "Diagnóstico", "Fecha Cápsula", "mCI"]]
     for _, p in df.iterrows():
         data.append([
@@ -88,7 +74,7 @@ def generar_pdf_stream(df, total):
     return buffer
 
 # --- INTERFAZ DE USUARIO ---
-st.title("☢️ Gestión de Medicina Nuclear - Atlántico")
+st.title("☢️ Gestión de Medicina Nuclear - Local")
 
 with st.sidebar.form("form_paciente", clear_on_submit=True):
     st.subheader("Registrar Paciente")
@@ -106,23 +92,16 @@ if submit:
     if not nombre or not cedula:
         st.sidebar.error("Error: El Nombre y el ID son obligatorios.")
     else:
-        # 1. Crear el nuevo registro
+        # Crear el nuevo registro
         nuevo_registro = pd.DataFrame([{
             "Nombre": nombre, "ID": cedula, "Teléfono": tel, "Entidad": entidad,
             "Edad": edad, "Diagnóstico": diag, "Fecha Cápsula": fecha_cap.strftime("%d/%m/%Y"), 
             "mCI": dosis
         }])
         
-        # 2. Actualizar la lista en memoria (Sesión)
+        # Actualizar la lista en memoria (Sesión)
         st.session_state.df_pacientes = pd.concat([st.session_state.df_pacientes, nuevo_registro], ignore_index=True)
-        
-        # 3. Intentar guardar en Google Sheets (Pestaña Sheet1)
-        try:
-            conn.update(data=st.session_state.df_pacientes, worksheet="Sheet1")
-            st.sidebar.success(f"✅ ¡Guardado en Excel y Lista!: {nombre}")
-        except Exception as e:
-            st.sidebar.warning(f"⚠️ Guardado solo en lista local. (Detalle: {e})")
-        
+        st.sidebar.success(f"✅ Añadido a la lista: {nombre}")
         st.rerun()
 
 # --- VISUALIZACIÓN Y CÁLCULOS ---
@@ -149,10 +128,6 @@ if not st.session_state.df_pacientes.empty:
         
         if col_b.button("🗑️", key=f"btn_del_{i}"):
             st.session_state.df_pacientes = st.session_state.df_pacientes.drop(i).reset_index(drop=True)
-            try:
-                conn.update(data=st.session_state.df_pacientes, worksheet="Sheet1")
-            except Exception:
-                pass
             st.rerun()
     
     st.divider()
@@ -166,5 +141,9 @@ if not st.session_state.df_pacientes.empty:
         mime="application/pdf",
         use_container_width=True
     )
+    
+    if st.button("🔴 Borrar toda la lista"):
+        st.session_state.df_pacientes = pd.DataFrame(columns=st.session_state.df_pacientes.columns)
+        st.rerun()
 else:
     st.info("No hay pacientes registrados en la programación de esta semana.")
