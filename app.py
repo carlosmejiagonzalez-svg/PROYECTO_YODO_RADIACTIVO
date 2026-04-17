@@ -1,56 +1,70 @@
 import streamlit as st
 import pandas as pd
+from datetime import datetime
+import pytz
 from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Prueba de Conexión", layout="wide")
+st.set_page_config(page_title="Gestión Medicina Nuclear", layout="wide")
+colombia_tz = pytz.timezone('America/Bogota')
 
-# --- CONEXIÓN ---
-# No necesitas pasarle la URL aquí si ya está en los Secrets (Misterios)
-conn = st.connection("gsheets", type=GSheetsConnection)
+# --- CONEXIÓN FORZADA (Nombre nuevo para evitar caché) ---
+conn = st.connection("hoja_nuclear", type=GSheetsConnection)
 
-# --- FUNCIÓN DE CARGA ---
 def cargar_datos():
     try:
-        # ttl=0 obliga a leer los datos reales de Google cada vez
-        return conn.read(ttl=0)
+        # Forzamos lectura total
+        df = conn.read(ttl=0)
+        if df is not None and not df.empty:
+            df.columns = [str(c).strip() for c in df.columns]
+            return df
     except:
-        # Si la hoja está totalmente vacía, crea las columnas base
-        return pd.DataFrame(columns=["Nombre", "ID", "mCI"])
+        pass
+    return pd.DataFrame(columns=["Nombre", "ID", "mCI"])
 
-# Inicializar la lista en la memoria de la web
 if 'df_pacientes' not in st.session_state:
     st.session_state.df_pacientes = cargar_datos()
 
-st.title("☢️ Prueba de Registro")
+st.title("☢️ Registro de Pacientes")
 
-# --- FORMULARIO EN BARRA LATERAL ---
-with st.sidebar.form("form_test"):
-    nombre = st.text_input("Nombre").upper()
-    cedula = st.text_input("ID")
-    dosis = st.number_input("mCi", 0.0)
-    boton = st.form_submit_button("Sincronizar ahora")
+# --- FORMULARIO ---
+with st.sidebar.form("registro_nuclear", clear_on_submit=True):
+    st.subheader("Nuevo Ingreso")
+    nombre = st.text_input("Nombre Completo").upper()
+    cedula = st.text_input("ID / Cédula")
+    dosis = st.number_input("Dosis (mCi)", 0.0, step=0.1)
+    enviar = st.form_submit_button("Sincronizar con Google Sheets")
 
-if boton:
+if enviar:
     if nombre and cedula:
-        # 1. Crear el nuevo registro
-        nuevo = pd.DataFrame([{"Nombre": nombre, "ID": cedula, "mCI": dosis}])
+        # Crear DataFrame con el nuevo paciente
+        nuevo_p = pd.DataFrame([{
+            "Nombre": nombre, 
+            "ID": str(cedula), 
+            "mCI": dosis
+        }])
         
-        # 2. Unirlo a lo que ya existe
-        st.session_state.df_pacientes = pd.concat([st.session_state.df_pacientes, nuevo], ignore_index=True)
+        # Unir al estado actual
+        st.session_state.df_pacientes = pd.concat([st.session_state.df_pacientes, nuevo_p], ignore_index=True)
         
         try:
-            # 3. ENVIAR A GOOGLE (Sin especificar hoja, para que use la principal)
+            # Intentar actualización
             conn.update(data=st.session_state.df_pacientes)
-            
-            st.sidebar.success(f"✅ ¡Dato enviado!")
-            # Limpiar la memoria interna de Streamlit para que "vea" el cambio
+            st.sidebar.success(f"✅ ¡Sincronizado!: {nombre}")
             st.cache_data.clear()
         except Exception as e:
-            st.sidebar.error(f"❌ Fallo técnico: {e}")
+            st.sidebar.error(f"Fallo de conexión: {e}")
         
         st.rerun()
 
-# --- MOSTRAR TABLA ---
-st.write("### Datos detectados en el Excel:")
-st.table(st.session_state.df_pacientes)
+# --- TABLA DE DATOS ---
+st.write("### Datos en la Hoja de Cálculo")
+if not st.session_state.df_pacientes.empty:
+    st.dataframe(st.session_state.df_pacientes, use_container_width=True)
+else:
+    st.info("No hay pacientes registrados aún.")
+
+# Botón para limpiar la vista local si es necesario
+if st.button("Limpiar Vista Local"):
+    st.session_state.df_pacientes = pd.DataFrame(columns=["Nombre", "ID", "mCI"])
+    st.rerun()
