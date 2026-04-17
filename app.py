@@ -12,7 +12,7 @@ import io
 import os
 from streamlit_gsheets import GSheetsConnection
 
-# URL de tu Google Apps Script (Asegúrate de haber implementado la versión con "action")
+# URL de tu Google Apps Script
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz8FcolZ346Fg3pL_yU1WPpMh4T2NHrR0t0HhAm-0VBDJbrZ7fO78jTKEVcrnfCK54/exec"
 
 st.set_page_config(page_title="Nuclear 2000 Ltda - Gestión Avanzada", layout="wide")
@@ -80,10 +80,10 @@ def generar_pdf(lista, total):
 # --- INTERFAZ ---
 st.title("☢️ Gestión de Medicina Nuclear - Nuclear 2000 Ltda")
 
-tab1, tab2, tab3 = st.tabs(["📋 Programación y Pedidos", "📦 Inventario y Reasignación", "🧮 Calculadora de Decaimiento"])
+tab1, tab2, tab3 = st.tabs(["📋 Programación", "📦 Inventario", "🧮 Calculadora"])
 
+# Cálculos de dosis
 dosis_actual = sum(float(p.get('mCI', 0)) for p in st.session_state.lista_local)
-restante = LIMITE_SEMANAL - dosis_actual
 
 # --- TAB 1: PROGRAMACIÓN ---
 with tab1:
@@ -105,16 +105,13 @@ with tab1:
                 })
                 try:
                     requests.get(SCRIPT_URL, params=params, timeout=5)
-                except:
-                    pass
+                except: pass
                 st.rerun()
 
     st.metric("Total Programado Semanal", f"{round(dosis_actual, 2)} mCi")
     
     if st.session_state.lista_local:
         df_prog = pd.DataFrame(st.session_state.lista_local)
-        
-        # Validación de columnas para evitar el KeyError
         for col in ["Nombre", "ID", "Entidad", "Fecha", "mCI", "Estado"]:
             if col not in df_prog.columns:
                 df_prog[col] = "PENDIENTE" if col == "Estado" else ""
@@ -126,17 +123,15 @@ with tab1:
                            file_name=f"pedido_{datetime.now(colombia_tz).strftime('%d_%m_%Y')}.pdf",
                            use_container_width=True)
         
-        if st.button("🚨 LIMPIAR SEMANA Y DRIVE", type="primary"):
-            try:
-                requests.post(SCRIPT_URL, timeout=10)
-            except:
-                pass
+        if st.button("🚨 LIMPIAR SEMANA", type="primary"):
+            try: requests.post(SCRIPT_URL, timeout=10)
+            except: pass
             st.session_state.lista_local = []
             st.rerun()
 
-# --- TAB 2: INVENTARIO Y REASIGNACIÓN ---
+# --- TAB 2: INVENTARIO ---
 with tab2:
-    st.header("Gestión de Dosis y Escenarios")
+    st.header("Gestión de Dosis y Reasignación")
     if not st.session_state.lista_local:
         st.info("No hay pacientes registrados.")
     else:
@@ -144,52 +139,59 @@ with tab2:
             with st.expander(f"📍 {p['Nombre']} - {p['mCI']} mCi [{p.get('Estado', 'PENDIENTE')}]"):
                 c1, c2 = st.columns(2)
                 
-                # Gestión de Estado y Notas
-                nuevo_est = c1.selectbox("Cambiar Estado", 
+                # Gestión de Estado
+                nuevo_est = c1.selectbox("Estado", 
                                        ["PENDIENTE", "RECIBIDO", "APLICADO", "CANCELADO", "DECAIMIENTO"],
                                        index=["PENDIENTE", "RECIBIDO", "APLICADO", "CANCELADO", "DECAIMIENTO"].index(p.get('Estado', 'PENDIENTE')),
                                        key=f"est_{idx}")
                 
-                nuevas_notas = c1.text_area("Notas / Observaciones", value=p.get('Notas', ""), key=f"notas_{idx}")
+                nuevas_notas = c1.text_area("Notas", value=p.get('Notas', ""), key=f"notas_{idx}")
                 
                 if c1.button("💾 Guardar Cambios", key=f"save_{idx}"):
-                    params = {"action": "update", "id": p['ID'], "nombre": p['Nombre'], "estado": nuevo_est, "mci": p['mCI'], "notas": nuevas_notas}
+                    params = {"action": "update", "old_id": p['ID'], "id": p['ID'], "nombre": p['Nombre'], "estado": nuevo_est, "mci": p['mCI'], "notas": nuevas_notas}
                     try:
                         requests.get(SCRIPT_URL, params=params, timeout=5)
                         st.session_state.lista_local[idx]['Estado'] = nuevo_est
                         st.session_state.lista_local[idx]['Notas'] = nuevas_notas
-                        st.success("Sincronizado con Drive")
                         st.rerun()
-                    except:
-                        st.error("Error al sincronizar")
+                    except: st.error("Error de conexión")
 
-                # Escenario de Reasignación
+                # REASIGNACIÓN (CORREGIDA CON ID NUEVO)
                 if p.get('Estado') == "CANCELADO":
-                    c2.warning("Reasignar dosis de este paciente:")
-                    n_nom = c2.text_input("Nombre Nuevo Paciente", key=f"n_nom_{idx}").upper()
-                    n_mci = c2.number_input("Dosis a entregar (mCi)", value=float(p['mCI']), key=f"n_mci_{idx}")
-                    n_notas = c2.text_input("Notas de reasignación", value=f"Reasignado de {p['Nombre']}", key=f"n_not_{idx}")
+                    c2.warning("Reasignar dosis:")
+                    n_nom = c2.text_input("Nuevo Paciente (Nombre)", key=f"n_nom_{idx}").upper()
+                    n_id = c2.text_input("Nuevo Paciente (ID/Cédula)", key=f"n_id_{idx}")
+                    n_mci = c2.number_input("Dosis (mCi)", value=float(p['mCI']), key=f"n_mci_{idx}")
                     
                     if c2.button("🔄 Confirmar Reasignación", key=f"btn_reas_{idx}"):
-                        params = {"action": "update", "id": p['ID'], "nombre": n_nom, "estado": "RECIBIDO", "mci": n_mci, "notas": n_notas}
-                        try:
-                            requests.get(SCRIPT_URL, params=params, timeout=5)
-                            st.session_state.lista_local[idx].update({
-                                "Nombre": n_nom, "mCI": n_mci, "Estado": "RECIBIDO", "Notas": n_notas
-                            })
-                            st.rerun()
-                        except:
-                            st.error("Error en reasignación")
+                        if n_nom and n_id:
+                            # 'old_id' sirve para que el Script encuentre la fila, 'id' es el valor nuevo
+                            params = {
+                                "action": "update", 
+                                "old_id": p['ID'], 
+                                "id": n_id, 
+                                "nombre": n_nom, 
+                                "estado": "RECIBIDO", 
+                                "mci": n_mci, 
+                                "notas": f"Reasignado de {p['Nombre']}"
+                            }
+                            try:
+                                requests.get(SCRIPT_URL, params=params, timeout=5)
+                                st.session_state.lista_local[idx].update({
+                                    "Nombre": n_nom, "ID": n_id, "mCI": n_mci, "Estado": "RECIBIDO", "Notas": f"Reasignado de {p['Nombre']}"
+                                })
+                                st.rerun()
+                            except: st.error("Error al reasignar")
+                        else:
+                            c2.error("Faltan datos del nuevo paciente")
 
 # --- TAB 3: CALCULADORA ---
 with tab3:
-    st.header("Cálculo de Decaimiento Radiactivo")
+    st.header("Calculadora de Decaimiento")
     col_i, col_f = st.columns(2)
-    
     act_i = col_i.number_input("Actividad Inicial (mCi)", 0.0, 1000.0, 50.0)
     f_cal = col_i.date_input("Fecha de calibración", datetime.now(colombia_tz))
     h_cal = col_i.time_input("Hora de calibración")
-    
     f_f = col_f.date_input("Fecha a Consultar", datetime.now(colombia_tz))
     h_f = col_f.time_input("Hora a Consultar")
     
@@ -197,12 +199,10 @@ with tab3:
     dt_f = datetime.combine(f_f, h_f)
     diff = (dt_f - dt_i).total_seconds() / 3600
     
-    if diff < 0:
-        st.error("La fecha de consulta debe ser posterior a la de calibración.")
-    else:
+    if diff >= 0:
         act_f = calcular_decaimiento(act_i, diff)
         st.metric("Actividad Resultante", f"{round(act_f, 2)} mCi")
-        st.info(f"Tiempo transcurrido: {round(diff, 2)} horas")
+    else: st.error("Revisar fechas")
 
 if not st.session_state.lista_local:
     if st.button("🔄 Cargar datos de Drive"):
