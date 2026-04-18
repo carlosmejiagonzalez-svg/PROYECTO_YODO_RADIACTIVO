@@ -84,6 +84,7 @@ t1, t2, t3 = st.tabs(["📋 Programación", "📦 Inventario", "🧮 Calculadora
 with t1:
     c1, c2 = st.columns([1, 2])
     with c1:
+        st.subheader("📝 Nuevo Registro")
         with st.form("f_reg", clear_on_submit=True):
             n, i, e = st.text_input("Nombre").upper(), st.text_input("Cédula"), st.text_input("Entidad").upper()
             d = st.number_input("Dosis mCi", 0.0)
@@ -91,12 +92,17 @@ with t1:
             if st.form_submit_button("Sincronizar Pedido"):
                 requests.get(SCRIPT_URL, params={"action":"register","nombre":n,"id":i,"entidad":e,"mci":d,"fecha":f})
                 st.session_state.lista_local = cargar_datos(); st.rerun()
+        st.divider()
         if st.button("🚨 LIMPIAR PANTALLA", use_container_width=True):
             requests.post(SCRIPT_URL); st.session_state.lista_local = []; st.rerun()
     with c2:
         if st.session_state.lista_local:
+            df = pd.DataFrame(st.session_state.lista_local)
+            # CONTADOR FUNDAMENTAL RESTAURADO
+            total_mci = pd.to_numeric(df[~df['Estado'].isin(['CANCELADO', 'DECAIMIENTO'])]['mCI'], errors='coerce').sum()
+            st.metric("Total mCi Pedido", f"{total_mci} mCi")
             st.download_button("📄 DESCARGAR PEDIDO", data=generar_pdf(st.session_state.lista_local, "PEDIDO"), file_name="pedido.pdf", use_container_width=True)
-            st.dataframe(pd.DataFrame(st.session_state.lista_local)[["Nombre", "ID", "mCI", "Fecha_Capsula"]], use_container_width=True)
+            st.dataframe(df[~df['Estado'].isin(['CANCELADO', 'DECAIMIENTO'])][["Nombre", "ID", "mCI", "Fecha_Capsula"]], use_container_width=True)
 
 with t2:
     if st.session_state.lista_local:
