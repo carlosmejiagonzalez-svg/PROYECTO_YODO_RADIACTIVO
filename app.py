@@ -12,6 +12,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
+# URL de tu Apps Script corregido
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz8FcolZ346Fg3pL_yU1WPpMh4T2NHrR0t0HhAm-0VBDJbrZ7fO78jTKEVcrnfCK54/exec"
 LOGO_PATH = "logo.png" 
 
@@ -28,6 +29,9 @@ def cargar_datos():
             df.columns = [str(c).strip() for c in df.columns]
             if "ID" in df.columns:
                 df["ID"] = df["ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+            # Asegurar existencia de columnas para evitar errores de lectura
+            for c in ["Nombre", "ID", "Entidad", "Fecha_Capsula", "mCI", "Estado", "Fecha_Recepcion", "Fecha_Administracion", "Notas"]:
+                if c not in df.columns: df[c] = ""
             return df.to_dict('records')
     except: pass
     return []
@@ -45,8 +49,8 @@ def generar_pdf(lista, tipo="PEDIDO"):
             elementos.append(img)
         except: pass
     
-    titulo = "PROGRAMACIÓN PEDIDO YODO I131" if tipo == "PEDIDO" else "REPORTE DE TRAZABILIDAD Y MOVIMIENTO"
-    elementos.append(Paragraph(f"<b>{titulo}</b>", ParagraphStyle('T', parent=styles['Title'], fontSize=15, textColor=colors.HexColor("#1A237E"))))
+    titulo_texto = "PROGRAMACIÓN PEDIDO YODO I131" if tipo == "PEDIDO" else "REPORTE DE TRAZABILIDAD Y MOVIMIENTO"
+    elementos.append(Paragraph(f"<b>{titulo_texto}</b>", ParagraphStyle('T', parent=styles['Title'], fontSize=15, textColor=colors.HexColor("#1A237E"))))
     elementos.append(Paragraph(f"Fecha Reporte: {datetime.now(colombia_tz).strftime('%d/%m/%Y %H:%M')}", styles['Normal']))
     elementos.append(Spacer(1, 15))
     
@@ -70,7 +74,7 @@ def generar_pdf(lista, tipo="PEDIDO"):
         col_widths = [140, 90, 40, 80, 85, 85, 200]
 
     t = Table(data, colWidths=col_widths)
-    t.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1A237E")), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke), ('GRID', (0, 0), (-1, -1), 0.5, colors.grey), ('FONTSIZE', (0, 0), (-1, -1), 8), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE')]))
+    t.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1A237E")), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke), ('GRID', (0, 0), (-1, -1), 0.5, colors.grey), ('FONTSIZE', (0, 0), (-1, -1), 8), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#F9F9F9")])]))
     elementos.append(t)
     doc.build(elementos)
     buffer.seek(0)
@@ -79,8 +83,9 @@ def generar_pdf(lista, tipo="PEDIDO"):
 if 'lista_local' not in st.session_state:
     st.session_state.lista_local = cargar_datos()
 
-t1, t2, t3 = st.tabs(["📋 Programación", "📦 Inventario", "🧮 Calculadora"])
+t1, t2, t3 = st.tabs(["📋 Programación", "📦 Inventario y Trazabilidad", "🧮 Calculadora"])
 
+# --- PESTAÑA 1: PROGRAMACIÓN ---
 with t1:
     c1, c2 = st.columns([1, 2])
     with c1:
@@ -93,36 +98,51 @@ with t1:
                 requests.get(SCRIPT_URL, params={"action":"register","nombre":n,"id":i,"entidad":e,"mci":d,"fecha":f})
                 st.session_state.lista_local = cargar_datos(); st.rerun()
         st.divider()
-        if st.button("🚨 LIMPIAR PANTALLA", use_container_width=True):
+        if st.button("🚨 LIMPIAR PANTALLA / RESET", use_container_width=True):
             requests.post(SCRIPT_URL); st.session_state.lista_local = []; st.rerun()
     with c2:
         if st.session_state.lista_local:
             df = pd.DataFrame(st.session_state.lista_local)
-            # CONTADOR FUNDAMENTAL RESTAURADO
             total_mci = pd.to_numeric(df[~df['Estado'].isin(['CANCELADO', 'DECAIMIENTO'])]['mCI'], errors='coerce').sum()
             st.metric("Total mCi Pedido", f"{total_mci} mCi")
             st.download_button("📄 DESCARGAR PEDIDO", data=generar_pdf(st.session_state.lista_local, "PEDIDO"), file_name="pedido.pdf", use_container_width=True)
             st.dataframe(df[~df['Estado'].isin(['CANCELADO', 'DECAIMIENTO'])][["Nombre", "ID", "mCI", "Fecha_Capsula"]], use_container_width=True)
 
+# --- PESTAÑA 2: INVENTARIO Y REASIGNACIÓN ---
 with t2:
     if st.session_state.lista_local:
-        st.download_button("📑 REPORTE TRAZABILIDAD", data=generar_pdf(st.session_state.lista_local, "TRAZABILIDAD"), file_name="trazabilidad.pdf", use_container_width=True)
+        st.download_button("📑 REPORTE TRAZABILIDAD COMPLETO", data=generar_pdf(st.session_state.lista_local, "TRAZABILIDAD"), file_name="trazabilidad.pdf", use_container_width=True)
         for idx, p in enumerate(st.session_state.lista_local):
             with st.expander(f"📍 {p['Nombre']} | {p['Estado']}"):
                 col_a, col_b = st.columns(2)
-                est = col_a.selectbox("Estado", ["PENDIENTE", "RECIBIDO", "ADMINISTRADA", "CANCELADO", "DECAIMIENTO"], index=0, key=f"s_{idx}")
+                # Actualización de Estado
+                est_list = ["PENDIENTE", "RECIBIDO", "ADMINISTRADA", "CANCELADO", "DECAIMIENTO"]
+                est = col_a.selectbox("Estado", est_list, index=est_list.index(p.get('Estado', 'PENDIENTE')), key=f"s_{idx}")
                 f_admin_val = col_a.date_input("Fecha Administración", key=f"fa_{idx}").strftime("%d/%m/%Y") if est == "ADMINISTRADA" else ""
-                obs = col_a.text_area("Notas", value=str(p.get('Notas','')) if str(p.get('Notas',''))!='nan' else "", key=f"o_{idx}")
-                if col_a.button("💾 Guardar", key=f"g_{idx}"):
+                obs = col_a.text_area("Notas / Motivo", value=str(p.get('Notas','')) if str(p.get('Notas',''))!='nan' else "", key=f"o_{idx}")
+                
+                if col_a.button("💾 Guardar Cambios", key=f"g_{idx}"):
                     requests.get(SCRIPT_URL, params={"action":"update", "old_id":str(p['ID']), "estado":est, "notas":obs, "fecha_administracion":f_admin_val})
                     st.session_state.lista_local = cargar_datos(); st.rerun()
 
+                # Módulo de Reasignación (Si está cancelado)
+                if p.get('Estado') == "CANCELADO":
+                    col_b.info("🔄 Reasignación de Dosis")
+                    rn, ri = col_b.text_input("Nombre Nuevo", key=f"rn_{idx}").upper(), col_b.text_input("ID Nuevo", key=f"ri_{idx}")
+                    re, rd = col_b.text_input("Entidad", value=p['Entidad'], key=f"re_{idx}").upper(), col_b.number_input("mCi", value=float(p['mCI']), key=f"rd_{idx}")
+                    if col_b.button("Confirmar Traspaso", key=f"tr_{idx}"):
+                        h = f"Dosis cedida por {p['Nombre']}. Motivo: {obs}"
+                        requests.get(SCRIPT_URL, params={"action":"reasignar", "old_id":str(p['ID']), "nombre":rn, "id":ri, "entidad":re, "mci":rd, "fecha":p['Fecha_Capsula'], "notas":h})
+                        st.session_state.lista_local = cargar_datos(); st.rerun()
+
+# --- PESTAÑA 3: CALCULADORA ---
 with t3:
     st.header("🧮 Calculadora I-131")
     ai = st.number_input("Actividad Inicial (mCi)", value=100.0)
-    fc = st.date_input("Fecha Calibración")
-    ff = st.date_input("Fecha Cálculo")
-    diff = (ff - fc).days * 24
+    fc, hc = st.date_input("Fecha Calibración"), st.time_input("Hora Calibración")
+    ff, hf = st.date_input("Fecha Cálculo"), st.time_input("Hora Cálculo")
+    dt1, dt2 = datetime.combine(fc, hc), datetime.combine(ff, hf)
+    diff = (dt2 - dt1).total_seconds() / 3600
     if diff >= 0:
         af = ai * math.exp(-math.log(2) * diff / (HL_YODO * 24))
         st.metric("Actividad Final", f"{round(af, 2)} mCi")
