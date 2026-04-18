@@ -6,9 +6,9 @@ import pytz
 import math
 import io
 from streamlit_gsheets import GSheetsConnection
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.pagesizes import letter, landscape
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
 # URL de tu Script
@@ -34,26 +34,51 @@ def cargar_datos():
     except: pass
     return []
 
-def generar_pdf(lista, titulo="REPORTE DE TRAZABILIDAD"):
+def generar_pdf_detallado(lista, titulo_reporte):
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    # Usamos landscape (apaisado) para que quepa toda la información de trazabilidad
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(letter), rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=18)
     elementos = []
-    estilos = getSampleStyleSheet()
-    elementos.append(Paragraph(f"<b>{titulo} - NUCLEAR 2000 LTDA</b>", estilos['Title']))
-    elementos.append(Paragraph(f"Generado el: {datetime.now(colombia_tz).strftime('%d/%m/%Y %H:%M')}", estilos['Normal']))
-    elementos.append(Spacer(1, 15))
+    styles = getSampleStyleSheet()
     
-    data = [["Paciente", "ID", "Entidad", "Dosis", "Estado", "Fecha Rec."]]
+    # Estilo de Título Moderno
+    title_style = ParagraphStyle('ModernTitle', parent=styles['Title'], fontSize=18, textColor=colors.HexColor("#1A237E"), spaceAfter=10)
+    subtitle_style = ParagraphStyle('ModernSub', parent=styles['Normal'], fontSize=10, textColor=colors.grey)
+
+    elementos.append(Paragraph(f"<b>{titulo_reporte}</b>", title_style))
+    elementos.append(Paragraph(f"NUCLEAR 2000 LTDA - Registro de Control y Trazabilidad de Radionúclidos", subtitle_style))
+    elementos.append(Paragraph(f"Fecha de emisión: {datetime.now(colombia_tz).strftime('%d/%m/%Y %H:%M')}", subtitle_style))
+    elementos.append(Spacer(1, 20))
+    
+    # Encabezados detallados
+    data = [["PACIENTE / ID", "ENTIDAD", "DOSIS", "ESTADO", "RECEPCIÓN", "OBSERVACIONES Y TRAZABILIDAD"]]
+    
     for p in lista:
-        data.append([p['Nombre'], p['ID'], p['Entidad'], f"{p['mCI']} mCi", p['Estado'], p['Fecha_Recepcion']])
+        # Limpieza de notas para el PDF
+        nota = str(p['Notas']) if str(p['Notas']).lower() != 'nan' else "Sin observaciones"
+        data.append([
+            Paragraph(f"<b>{p['Nombre']}</b><br/>ID: {p['ID']}", styles['Normal']),
+            p['Entidad'],
+            f"{p['mCI']} mCi",
+            p['Estado'],
+            p['Fecha_Recepcion'] if p['Fecha_Recepcion'] else "---",
+            Paragraph(nota, styles['Normal'])
+        ])
     
-    t = Table(data, colWidths=[130, 70, 80, 50, 70, 100])
+    # Tabla con diseño estético
+    t = Table(data, colWidths=[150, 100, 60, 80, 100, 240])
     t.setStyle(TableStyle([
-        ('BACKGROUND',(0,0),(-1,0),colors.darkblue),
-        ('TEXTCOLOR',(0,0),(-1,0),colors.whitesmoke),
-        ('GRID',(0,0),(-1,-1),0.5,colors.grey),
-        ('FONTSIZE',(0,0),(-1,-1),8),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1A237E")),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor("#F5F5F5")),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#FAFAFA")]),
     ]))
+    
     elementos.append(t)
     doc.build(elementos)
     buffer.seek(0)
@@ -62,80 +87,79 @@ def generar_pdf(lista, titulo="REPORTE DE TRAZABILIDAD"):
 if 'lista_local' not in st.session_state:
     st.session_state.lista_local = cargar_datos()
 
-t1, t2, t3 = st.tabs(["📋 Programación", "📦 Inventario", "🧮 Calculadora"])
+t1, t2, t3 = st.tabs(["📋 Programación de Pedidos", "📦 Inventario y Trazabilidad", "🧮 Calculadora"])
 
 # --- TAB 1: PROGRAMACIÓN ---
 with t1:
     col_f, col_v = st.columns([1, 2])
     with col_f:
         st.subheader("📝 Nuevo Registro")
-        with st.form("registro_limpio", clear_on_submit=True):
+        with st.form("f_reg", clear_on_submit=True):
             n = st.text_input("Nombre").upper()
             i = st.text_input("Cédula")
             e = st.text_input("Entidad").upper()
             d = st.number_input("Dosis (mCi)", 0.0)
             f = st.date_input("Fecha Aplicación").strftime("%d/%m/%Y")
-            if st.form_submit_button("Sincronizar"):
+            if st.form_submit_button("Sincronizar Pedido"):
                 requests.get(SCRIPT_URL, params={"action":"register","nombre":n,"id":i,"entidad":e,"mci":d,"fecha":f})
                 st.session_state.lista_local = cargar_datos()
                 st.rerun()
         
-        # BOTÓN DE LIMPIEZA TOTAL RECUPERADO
-        st.divider()
-        if st.button("🚨 LIMPIAR PANTALLA / RESET SEMANA", use_container_width=True):
+        if st.button("🚨 REINICIAR SEMANA (BORRAR TODO)", use_container_width=True):
             requests.post(SCRIPT_URL)
             st.session_state.lista_local = []
             st.rerun()
 
     with col_v:
-        st.subheader("📊 Inventario Programado")
+        st.subheader("📊 Resumen de Programación")
         if st.session_state.lista_local:
+            # BOTÓN PDF RESTAURADO EN PESTAÑA 1
+            pdf_pedidos = generar_pdf_detallado(st.session_state.lista_local, "REPORTE DE PEDIDOS")
+            st.download_button("📄 DESCARGAR PEDIDO PDF", data=pdf_pedidos, file_name="pedido_semanal.pdf", use_container_width=True)
+            
             df = pd.DataFrame(st.session_state.lista_local)
             prog = df[df['Estado'] != 'CANCELADO']['mCI'].apply(pd.to_numeric).sum()
-            st.metric("Total Dosis Programada", f"{prog} mCi")
+            st.metric("Total mCi Programados", f"{prog} mCi")
             st.dataframe(df[["Nombre", "ID", "mCI", "Estado"]], use_container_width=True)
 
 # --- TAB 2: INVENTARIO ---
 with t2:
     if st.session_state.lista_local:
-        c_t, c_b = st.columns([2, 1])
-        c_t.header("Control de Dosis")
+        ct, cb = st.columns([2, 1])
+        ct.header("Gestión de Trazabilidad")
         
-        # BOTÓN GENERAR RESUMEN GENERAL
-        resumen_pdf = generar_pdf(st.session_state.lista_local, "RESUMEN GENERAL DE INVENTARIO")
-        c_b.download_button("📄 GENERAR RESUMEN (PDF)", data=resumen_pdf, 
-                             file_name=f"resumen_{datetime.now().strftime('%d_%m')}.pdf", use_container_width=True)
+        # BOTÓN REPORTE DETALLADO (RESUMEN GENERAL)
+        pdf_total = generar_pdf_detallado(st.session_state.lista_local, "HOJA DE TRAZABILIDAD Y MOVIMIENTO")
+        cb.download_button("📑 GENERAR REPORTE DETALLADO (PDF)", data=pdf_total, file_name="trazabilidad_detallada.pdf", use_container_width=True)
 
         for idx, p in enumerate(st.session_state.lista_local):
-            with st.expander(f"📍 {p['Nombre']} | {p['Estado']}"):
+            color_edo = "green" if p['Estado'] == "APLICADO" else "orange" if p['Estado'] == "RECIBIDO" else "red" if p['Estado'] == "CANCELADO" else "blue"
+            with st.expander(f"📌 {p['Nombre']} | {p['Estado']}"):
                 col1, col2 = st.columns(2)
                 
-                # Actualización de Estado
-                est = col1.selectbox("Cambiar Estado", ["PENDIENTE", "RECIBIDO", "APLICADO", "CANCELADO"], 
-                                   index=["PENDIENTE", "RECIBIDO", "APLICADO", "CANCELADO"].index(p.get('Estado', 'PENDIENTE')), key=f"e{idx}")
-                not_v = str(p.get('Notas', '')) if str(p.get('Notas', '')).lower() != 'nan' else ""
-                obs = col1.text_area("Observaciones", value=not_v, key=f"n{idx}")
+                nuevo_est = col1.selectbox("Cambiar Estado", ["PENDIENTE", "RECIBIDO", "APLICADO", "CANCELADO"], 
+                                         index=["PENDIENTE", "RECIBIDO", "APLICADO", "CANCELADO"].index(p.get('Estado', 'PENDIENTE')), key=f"est_{idx}")
                 
-                if col1.button("💾 Guardar", key=f"b{idx}"):
-                    requests.get(SCRIPT_URL, params={"action":"update", "old_id":str(p['ID']).strip(), "estado":est, "notas":obs})
+                v_notas = str(p.get('Notas', '')) if str(p.get('Notas', '')).lower() != 'nan' else ""
+                nuevas_notas = col1.text_area("Observaciones / Motivo", value=v_notas, key=f"obs_{idx}", help="Si cancela, escriba aquí el motivo.")
+                
+                if col1.button("💾 Guardar Cambios", key=f"sav_{idx}"):
+                    requests.get(SCRIPT_URL, params={"action":"update", "old_id":str(p['ID']).strip(), "estado":nuevo_est, "notas":nuevas_notas})
                     st.session_state.lista_local = cargar_datos()
                     st.rerun()
 
-                # Reasignación con formulario completo
                 if p.get('Estado') == "CANCELADO":
-                    col2.warning("Reasignación de Dosis")
-                    rn = col2.text_input("Nuevo Nombre", key=f"rn{idx}").upper()
-                    ri = col2.text_input("Nueva ID", key=f"ri{idx}")
-                    re = col2.text_input("Entidad (Heredada)", value=p['Entidad'], key=f"re{idx}").upper()
-                    if col2.button("🔄 Confirmar Reasignación", key=f"rb{idx}"):
-                        hist = f"Original: {p['Nombre']}. Motivo: {obs}"
-                        # Pasamos todos los datos técnicos del paciente original
+                    col2.error("🔄 Reasignación de Dosis")
+                    rn = col2.text_input("Nombre Nuevo Paciente", key=f"rn_{idx}").upper()
+                    ri = col2.text_input("ID Nuevo Paciente", key=f"ri_{idx}")
+                    re = col2.text_input("Entidad", value=p['Entidad'], key=f"re_{idx}").upper()
+                    
+                    if col2.button("Confirmar Traspaso", key=f"tr_{idx}"):
+                        hist_text = f"CEDIDA POR: {p['Nombre']} (ID: {p['ID']}). MOTIVO: {nuevas_notas}"
                         params = {
-                            "action": "reasignar",
-                            "old_id": str(p['ID']).strip(),
+                            "action": "reasignar", "old_id": str(p['ID']).strip(),
                             "nombre": rn, "id": ri, "entidad": re,
-                            "mci": p['mCI'], "fecha": p['Fecha_Capsula'],
-                            "notas": hist
+                            "mci": p['mCI'], "fecha": p['Fecha_Capsula'], "notas": hist_text
                         }
                         requests.get(SCRIPT_URL, params=params)
                         st.session_state.lista_local = cargar_datos()
@@ -143,18 +167,20 @@ with t2:
 
 # --- TAB 3: CALCULADORA ---
 with t3:
-    st.header("🧮 Calculadora de Decaimiento")
+    st.header("🧮 Calculadora de Decaimiento I-131")
     c1, c2 = st.columns(2)
-    ai = c1.number_input("Actividad Inicial", value=100.0)
-    fc = c1.date_input("Fecha Calibración")
-    hc = c1.time_input("Hora Calibración")
-    ff = c2.date_input("Fecha Futura")
-    hf = c2.time_input("Hora Futura")
+    with c1:
+        act_i = st.number_input("Actividad Inicial (mCi)", value=100.0)
+        f_cal = st.date_input("Fecha Calibración")
+        h_cal = st.time_input("Hora Calibración")
+    with c2:
+        f_fut = st.date_input("Fecha Cálculo")
+        h_fut = st.time_input("Hora Cálculo")
     
-    dt1 = datetime.combine(fc, hc)
-    dt2 = datetime.combine(ff, hf)
-    h = (dt2 - dt1).total_seconds() / 3600
-    if h >= 0:
-        af = ai * math.exp(-math.log(2) * h / (HL_YODO * 24))
-        st.metric("Resultado", f"{round(af, 2)} mCi")
-    else: st.error("La fecha debe ser posterior.")
+    dt1 = datetime.combine(f_cal, h_cal)
+    dt2 = datetime.combine(f_fut, h_fut)
+    diff = (dt2 - dt1).total_seconds() / 3600
+    if diff >= 0:
+        act_f = act_i * math.exp(-math.log(2) * diff / (HL_YODO * 24))
+        st.metric("Resultado Actividad", f"{round(act_f, 2)} mCi", help="Fórmula de decaimiento radiactivo")
+    else: st.warning("La fecha de cálculo debe ser posterior.")
