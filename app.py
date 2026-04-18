@@ -29,6 +29,7 @@ def cargar_datos():
             df.columns = [str(c).strip() for c in df.columns]
             if "ID" in df.columns:
                 df["ID"] = df["ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+            # Mapeo: mCI_Real ahora se busca como Fecha_Administracion o se mantiene mCI_Real para compatibilidad
             columnas = ["Nombre", "ID", "Entidad", "Fecha_Capsula", "mCI", "Estado", "Fecha_Recepcion", "mCI_Real", "Notas"]
             for c in columnas:
                 if c not in df.columns: df[c] = ""
@@ -50,14 +51,12 @@ def generar_pdf(lista, tipo="PEDIDO"):
             elementos.append(img)
         except: pass
     
-    # CAMBIO 1: Título del PDF de Pedidos
     titulo_texto = "PROGRAMACIÓN PEDIDO YODO I131" if tipo == "PEDIDO" else "REPORTE DE TRAZABILIDAD Y MOVIMIENTO"
     elementos.append(Paragraph(f"<b>{titulo_texto}</b>", ParagraphStyle('T', parent=styles['Title'], fontSize=15, textColor=colors.HexColor("#1A237E"))))
     elementos.append(Paragraph(f"Fecha Reporte: {datetime.now(colombia_tz).strftime('%d/%m/%Y %H:%M')}", styles['Normal']))
     elementos.append(Spacer(1, 15))
     
     if tipo == "PEDIDO":
-        # CAMBIO 2: Incluir Fecha Toma de Cápsula en el PDF de Pedidos
         data = [["PACIENTE", "IDENTIFICACIÓN", "ENTIDAD", "FECHA TOMA", "mCi"]]
         for p in lista:
             if p['Estado'] not in ["CANCELADO", "DECAIMIENTO"]:
@@ -65,6 +64,7 @@ def generar_pdf(lista, tipo="PEDIDO"):
                 data.append([p['Nombre'], p['ID'], p['Entidad'], f_toma, f"{p['mCI']}"])
         col_widths = [180, 100, 120, 80, 50]
     else:
+        # Aquí mCI_Real ahora se imprime como FECHA DE ADMINISTRACIÓN
         data = [["PACIENTE / ID", "ENTIDAD", "mCI", "ESTADO", "F. RECEPCIÓN", "F. ADMIN.", "OBSERVACIONES"]]
         for p in lista:
             txt_notas = str(p['Notas']) if str(p['Notas']).lower() != 'nan' else ""
@@ -103,7 +103,6 @@ with t1:
         with st.form("f_reg", clear_on_submit=True):
             n, i, e = st.text_input("Nombre").upper(), st.text_input("Cédula"), st.text_input("Entidad").upper()
             d = st.number_input("Dosis mCi", 0.0)
-            # CAMBIO 3: Etiqueta "Fecha Toma de Cápsula"
             f = st.date_input("Fecha Toma de Cápsula").strftime("%d/%m/%Y")
             if st.form_submit_button("Sincronizar Pedido"):
                 requests.get(SCRIPT_URL, params={"action":"register","nombre":n,"id":i,"entidad":e,"mci":d,"fecha":f})
@@ -131,9 +130,12 @@ with t2:
                 col_a, col_b = st.columns(2)
                 est_list = ["PENDIENTE", "RECIBIDO", "ADMINISTRADA", "CANCELADO", "DECAIMIENTO"]
                 est = col_a.selectbox("Estado", est_list, index=est_list.index(p.get('Estado', 'PENDIENTE')), key=f"s_{idx}")
+                
                 f_recep_val = col_a.text_input("Fecha Recepción", value=str(p.get('Fecha_Recepcion', '')), key=f"fr_{idx}")
                 
+                # Usamos p['mCI_Real'] directamente para la fecha de administración
                 f_admin_actual = str(p.get('mCI_Real', '')) if str(p.get('mCI_Real', '')).lower() != 'nan' else ""
+                
                 if est == "ADMINISTRADA":
                     f_admin_val = col_a.date_input("Fecha de Administración", key=f"fa_{idx}").strftime("%d/%m/%Y")
                 else:
@@ -142,9 +144,14 @@ with t2:
                 obs = col_a.text_area("Notas / Motivo", value=str(p.get('Notas','')) if str(p.get('Notas',''))!='nan' else "", key=f"o_{idx}")
                 
                 if col_a.button("💾 Guardar Cambios", key=f"g_{idx}"):
+                    # En la URL de actualización, mandamos f_admin_val al parámetro mci_real
                     requests.get(SCRIPT_URL, params={
-                        "action": "update", "old_id": str(p['ID']).strip(), "estado": est, 
-                        "notas": obs, "fecha": f_recep_val, "mci_real": f_admin_val
+                        "action": "update", 
+                        "old_id": str(p['ID']).strip(), 
+                        "estado": est, 
+                        "notas": obs, 
+                        "fecha": f_recep_val, 
+                        "mci_real": f_admin_val
                     })
                     st.session_state.lista_local = cargar_datos(); st.rerun()
 
