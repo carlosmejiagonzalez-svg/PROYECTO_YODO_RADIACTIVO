@@ -29,7 +29,6 @@ def cargar_datos():
             df.columns = [str(c).strip() for c in df.columns]
             if "ID" in df.columns:
                 df["ID"] = df["ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-            # Aseguramos que existan las columnas necesarias
             columnas = ["Nombre", "ID", "Entidad", "Fecha_Capsula", "mCI", "Estado", "Fecha_Recepcion", "mCI_Real", "Notas"]
             for c in columnas:
                 if c not in df.columns: df[c] = ""
@@ -63,15 +62,11 @@ def generar_pdf(lista, tipo="PEDIDO"):
                 data.append([p['Nombre'], p['ID'], p['Entidad'], f"{p['mCI']}"])
         col_widths = [210, 110, 130, 80]
     else:
-        # REPORTE DETALLADO CON AMBAS FECHAS
         data = [["PACIENTE / ID", "ENTIDAD", "mCI", "ESTADO", "F. RECEPCIÓN", "F. ADMIN.", "OBSERVACIONES"]]
         for p in lista:
             txt_notas = str(p['Notas']) if str(p['Notas']).lower() != 'nan' else ""
-            # Si el estado es administrada, solemos guardar la fecha de admin en mCI_Real o similar, 
-            # pero aquí asumiremos que tu hoja tiene columnas para ambas.
             f_recep = str(p['Fecha_Recepcion']) if str(p['Fecha_Recepcion']).lower() != 'nan' else ""
-            f_admin = str(p['mCI_Real']) if str(p['mCI_Real']).lower() != 'nan' else "" # Usamos mCI_Real como campo temporal para f_admin si no hay otro
-            
+            f_admin = str(p['mCI_Real']) if str(p['mCI_Real']).lower() != 'nan' else ""
             data.append([
                 Paragraph(f"<b>{p['Nombre']}</b><br/>{p['ID']}", styles['Normal']),
                 p['Entidad'], p['mCI'], p['Estado'], f_recep, f_admin,
@@ -109,55 +104,69 @@ with t1:
             if st.form_submit_button("Sincronizar"):
                 requests.get(SCRIPT_URL, params={"action":"register","nombre":n,"id":i,"entidad":e,"mci":d,"fecha":f})
                 st.session_state.lista_local = cargar_datos(); st.rerun()
+        
+        # BOTÓN RESTAURADO: LIMPIAR PANTALLA
+        st.divider()
+        if st.button("🚨 LIMPIAR PANTALLA / RESET", use_container_width=True):
+            requests.post(SCRIPT_URL)
+            st.session_state.lista_local = []
+            st.rerun()
 
     with c2:
         if st.session_state.lista_local:
             df = pd.DataFrame(st.session_state.lista_local)
-            st.download_button("📄 DESCARGAR PEDIDO", data=generar_pdf(st.session_state.lista_local, "PEDIDO"), file_name="pedido.pdf")
+            prog = df[~df['Estado'].isin(['CANCELADO', 'DECAIMIENTO'])]['mCI'].apply(pd.to_numeric).sum()
+            st.metric("Total mCi Pedido", f"{prog} mCi")
+            st.download_button("📄 DESCARGAR PEDIDO", data=generar_pdf(st.session_state.lista_local, "PEDIDO"), file_name="pedido.pdf", use_container_width=True)
             st.dataframe(df[~df['Estado'].isin(['CANCELADO', 'DECAIMIENTO'])][["Nombre", "ID", "mCI"]], use_container_width=True)
 
 # --- TAB 2 ---
 with t2:
     if st.session_state.lista_local:
-        st.download_button("📑 REPORTE TRAZABILIDAD COMPLETO", data=generar_pdf(st.session_state.lista_local, "TRAZABILIDAD"), file_name="trazabilidad.pdf")
-        
+        st.download_button("📑 REPORTE TRAZABILIDAD COMPLETO", data=generar_pdf(st.session_state.lista_local, "TRAZABILIDAD"), file_name="trazabilidad.pdf", use_container_width=True)
         for idx, p in enumerate(st.session_state.lista_local):
             with st.expander(f"📍 {p['Nombre']} | {p['Estado']}"):
                 col_a, col_b = st.columns(2)
-                
                 est_list = ["PENDIENTE", "RECIBIDO", "ADMINISTRADA", "CANCELADO", "DECAIMIENTO"]
                 est = col_a.selectbox("Estado", est_list, index=est_list.index(p.get('Estado', 'PENDIENTE')), key=f"s_{idx}")
                 
-                # FECHAS
                 f_recep_val = col_a.text_input("Fecha Recepción", value=str(p.get('Fecha_Recepcion', '')), key=f"fr_{idx}")
                 
-                f_admin_val = str(p.get('mCI_Real', '')) # Usamos mCI_Real para guardar la fecha de admin
+                # Gestión de fecha de administración
+                f_admin_actual = str(p.get('mCI_Real', '')) if str(p.get('mCI_Real', '')).lower() != 'nan' else ""
                 if est == "ADMINISTRADA":
                     f_admin_val = col_a.date_input("Fecha de Administración", key=f"fa_{idx}").strftime("%d/%m/%Y")
-                
+                else:
+                    f_admin_val = f_admin_actual
+
                 obs = col_a.text_area("Notas / Motivo", value=str(p.get('Notas','')) if str(p.get('Notas',''))!='nan' else "", key=f"o_{idx}")
                 
                 if col_a.button("💾 Guardar", key=f"g_{idx}"):
-                    # Enviamos ambos campos de fecha al script
                     requests.get(SCRIPT_URL, params={
-                        "action": "update", 
-                        "old_id": str(p['ID']).strip(), 
-                        "estado": est, 
-                        "notas": obs, 
-                        "fecha": f_recep_val,    # Fecha de llegada
-                        "mci_real": f_admin_val  # Fecha de aplicación
+                        "action": "update", "old_id": str(p['ID']).strip(), "estado": est, 
+                        "notas": obs, "fecha": f_recep_val, "mci_real": f_admin_val
                     })
                     st.session_state.lista_local = cargar_datos(); st.rerun()
 
+                if p.get('Estado') == "CANCELADO":
+                    col_b.info("🔄 Reasignación")
+                    rn, ri = col_b.text_input("Nombre Nuevo", key=f"rn_{idx}").upper(), col_b.text_input("ID Nuevo", key=f"ri_{idx}")
+                    re, rd = col_b.text_input("Entidad", value=p['Entidad'], key=f"re_{idx}").upper(), col_b.number_input("mCi", value=float(p['mCI']), key=f"rd_{idx}")
+                    if col_b.button("Confirmar Traspaso", key=f"tr_{idx}"):
+                        h = f"Dosis cedida por {p['Nombre']}. Motivo: {obs}"
+                        requests.get(SCRIPT_URL, params={"action":"reasignar", "old_id":str(p['ID']).strip(), "nombre":rn, "id":ri, "entidad":re, "mci":rd, "fecha":p['Fecha_Capsula'], "notas":h})
+                        st.session_state.lista_local = cargar_datos(); st.rerun()
+
 # --- TAB 3 ---
 with t3:
-    st.header("🧮 Calculadora")
-    # Lógica de calculadora...
-    c1, c2 = st.columns(2)
-    ai = c1.number_input("Actividad Inicial", value=100.0)
-    dt1 = datetime.combine(c1.date_input("F. Calibración"), c1.time_input("H. Calibración"))
-    dt2 = datetime.combine(c2.date_input("F. Cálculo"), c2.time_input("H. Cálculo"))
+    st.header("🧮 Calculadora I-131")
+    col1, col2 = st.columns(2)
+    ai = col1.number_input("Actividad Inicial (mCi)", value=100.0)
+    fc, hc = col1.date_input("Fecha Calibración"), col1.time_input("Hora Calibración")
+    ff, hf = col2.date_input("Fecha Cálculo"), col2.time_input("Hora Cálculo")
+    dt1, dt2 = datetime.combine(fc, hc), datetime.combine(ff, hf)
     diff = (dt2 - dt1).total_seconds() / 3600
     if diff >= 0:
         af = ai * math.exp(-math.log(2) * diff / (HL_YODO * 24))
         st.metric("Actividad Final", f"{round(af, 2)} mCi")
+    else: st.error("Fecha de cálculo debe ser posterior.")
