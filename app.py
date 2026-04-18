@@ -50,17 +50,20 @@ def generar_pdf(lista, tipo="PEDIDO"):
             elementos.append(img)
         except: pass
     
-    titulo_texto = "PEDIDO DE RADIOFÁRMACOS" if tipo == "PEDIDO" else "REPORTE DE TRAZABILIDAD Y MOVIMIENTO"
+    # CAMBIO 1: Título del PDF de Pedidos
+    titulo_texto = "PROGRAMACIÓN PEDIDO YODO I131" if tipo == "PEDIDO" else "REPORTE DE TRAZABILIDAD Y MOVIMIENTO"
     elementos.append(Paragraph(f"<b>{titulo_texto}</b>", ParagraphStyle('T', parent=styles['Title'], fontSize=15, textColor=colors.HexColor("#1A237E"))))
     elementos.append(Paragraph(f"Fecha Reporte: {datetime.now(colombia_tz).strftime('%d/%m/%Y %H:%M')}", styles['Normal']))
     elementos.append(Spacer(1, 15))
     
     if tipo == "PEDIDO":
-        data = [["PACIENTE", "IDENTIFICACIÓN", "ENTIDAD", "DOSIS (mCi)"]]
+        # CAMBIO 2: Incluir Fecha Toma de Cápsula en el PDF de Pedidos
+        data = [["PACIENTE", "IDENTIFICACIÓN", "ENTIDAD", "FECHA TOMA", "mCi"]]
         for p in lista:
             if p['Estado'] not in ["CANCELADO", "DECAIMIENTO"]:
-                data.append([p['Nombre'], p['ID'], p['Entidad'], f"{p['mCI']}"])
-        col_widths = [210, 110, 130, 80]
+                f_toma = str(p.get('Fecha_Capsula', '')) if str(p.get('Fecha_Capsula', '')).lower() != 'nan' else ""
+                data.append([p['Nombre'], p['ID'], p['Entidad'], f_toma, f"{p['mCI']}"])
+        col_widths = [180, 100, 120, 80, 50]
     else:
         data = [["PACIENTE / ID", "ENTIDAD", "mCI", "ESTADO", "F. RECEPCIÓN", "F. ADMIN.", "OBSERVACIONES"]]
         for p in lista:
@@ -93,19 +96,19 @@ if 'lista_local' not in st.session_state:
 
 t1, t2, t3 = st.tabs(["📋 Programación", "📦 Inventario y Trazabilidad", "🧮 Calculadora"])
 
-# --- TAB 1 ---
 with t1:
     c1, c2 = st.columns([1, 2])
     with c1:
         st.subheader("📝 Nuevo Registro")
         with st.form("f_reg", clear_on_submit=True):
             n, i, e = st.text_input("Nombre").upper(), st.text_input("Cédula"), st.text_input("Entidad").upper()
-            d, f = st.number_input("Dosis mCi", 0.0), st.date_input("Fecha Pedido").strftime("%d/%m/%Y")
-            if st.form_submit_button("Sincronizar"):
+            d = st.number_input("Dosis mCi", 0.0)
+            # CAMBIO 3: Etiqueta "Fecha Toma de Cápsula"
+            f = st.date_input("Fecha Toma de Cápsula").strftime("%d/%m/%Y")
+            if st.form_submit_button("Sincronizar Pedido"):
                 requests.get(SCRIPT_URL, params={"action":"register","nombre":n,"id":i,"entidad":e,"mci":d,"fecha":f})
                 st.session_state.lista_local = cargar_datos(); st.rerun()
         
-        # BOTÓN RESTAURADO: LIMPIAR PANTALLA
         st.divider()
         if st.button("🚨 LIMPIAR PANTALLA / RESET", use_container_width=True):
             requests.post(SCRIPT_URL)
@@ -118,9 +121,8 @@ with t1:
             prog = df[~df['Estado'].isin(['CANCELADO', 'DECAIMIENTO'])]['mCI'].apply(pd.to_numeric).sum()
             st.metric("Total mCi Pedido", f"{prog} mCi")
             st.download_button("📄 DESCARGAR PEDIDO", data=generar_pdf(st.session_state.lista_local, "PEDIDO"), file_name="pedido.pdf", use_container_width=True)
-            st.dataframe(df[~df['Estado'].isin(['CANCELADO', 'DECAIMIENTO'])][["Nombre", "ID", "mCI"]], use_container_width=True)
+            st.dataframe(df[~df['Estado'].isin(['CANCELADO', 'DECAIMIENTO'])][["Nombre", "ID", "mCI", "Fecha_Capsula"]], use_container_width=True)
 
-# --- TAB 2 ---
 with t2:
     if st.session_state.lista_local:
         st.download_button("📑 REPORTE TRAZABILIDAD COMPLETO", data=generar_pdf(st.session_state.lista_local, "TRAZABILIDAD"), file_name="trazabilidad.pdf", use_container_width=True)
@@ -129,10 +131,8 @@ with t2:
                 col_a, col_b = st.columns(2)
                 est_list = ["PENDIENTE", "RECIBIDO", "ADMINISTRADA", "CANCELADO", "DECAIMIENTO"]
                 est = col_a.selectbox("Estado", est_list, index=est_list.index(p.get('Estado', 'PENDIENTE')), key=f"s_{idx}")
-                
                 f_recep_val = col_a.text_input("Fecha Recepción", value=str(p.get('Fecha_Recepcion', '')), key=f"fr_{idx}")
                 
-                # Gestión de fecha de administración
                 f_admin_actual = str(p.get('mCI_Real', '')) if str(p.get('mCI_Real', '')).lower() != 'nan' else ""
                 if est == "ADMINISTRADA":
                     f_admin_val = col_a.date_input("Fecha de Administración", key=f"fa_{idx}").strftime("%d/%m/%Y")
@@ -141,7 +141,7 @@ with t2:
 
                 obs = col_a.text_area("Notas / Motivo", value=str(p.get('Notas','')) if str(p.get('Notas',''))!='nan' else "", key=f"o_{idx}")
                 
-                if col_a.button("💾 Guardar", key=f"g_{idx}"):
+                if col_a.button("💾 Guardar Cambios", key=f"g_{idx}"):
                     requests.get(SCRIPT_URL, params={
                         "action": "update", "old_id": str(p['ID']).strip(), "estado": est, 
                         "notas": obs, "fecha": f_recep_val, "mci_real": f_admin_val
@@ -157,7 +157,6 @@ with t2:
                         requests.get(SCRIPT_URL, params={"action":"reasignar", "old_id":str(p['ID']).strip(), "nombre":rn, "id":ri, "entidad":re, "mci":rd, "fecha":p['Fecha_Capsula'], "notas":h})
                         st.session_state.lista_local = cargar_datos(); st.rerun()
 
-# --- TAB 3 ---
 with t3:
     st.header("🧮 Calculadora I-131")
     col1, col2 = st.columns(2)
@@ -169,4 +168,3 @@ with t3:
     if diff >= 0:
         af = ai * math.exp(-math.log(2) * diff / (HL_YODO * 24))
         st.metric("Actividad Final", f"{round(af, 2)} mCi")
-    else: st.error("Fecha de cálculo debe ser posterior.")
