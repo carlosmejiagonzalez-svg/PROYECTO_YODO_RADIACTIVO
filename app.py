@@ -151,7 +151,7 @@ with t2:
                         "estado": est, 
                         "notas": obs, 
                         "fecha": f_recep_val, 
-                        "mci_real": f_admin_val
+                        "fecha_administracion": f_admin_val
                     })
                     st.session_state.lista_local = cargar_datos(); st.rerun()
 
