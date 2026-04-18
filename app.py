@@ -16,7 +16,7 @@ SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz8FcolZ346Fg3pL_yU1WPpMh4
 
 st.set_page_config(page_title="Nuclear 2000 Ltda", layout="wide")
 colombia_tz = pytz.timezone('America/Bogota')
-HL_YODO = 8.02 # Vida media Yodo-131
+HL_YODO = 8.02 
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -34,26 +34,25 @@ def cargar_datos():
     except: pass
     return []
 
-def generar_pdf(lista):
+def generar_pdf(lista, titulo="REPORTE DE TRAZABILIDAD"):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
     elementos = []
     estilos = getSampleStyleSheet()
-    elementos.append(Paragraph("<b>REPORTE DE PROGRAMACIÓN Y TRAZABILIDAD - NUCLEAR 2000 LTDA</b>", estilos['Title']))
+    elementos.append(Paragraph(f"<b>{titulo} - NUCLEAR 2000 LTDA</b>", estilos['Title']))
     elementos.append(Paragraph(f"Generado el: {datetime.now(colombia_tz).strftime('%d/%m/%Y %H:%M')}", estilos['Normal']))
     elementos.append(Spacer(1, 15))
     
-    data = [["Paciente", "ID", "Entidad", "Dosis", "Estado", "Notas"]]
+    data = [["Paciente", "ID", "Entidad", "Dosis", "Estado", "Fecha Rec."]]
     for p in lista:
-        data.append([p['Nombre'], p['ID'], p['Entidad'], f"{p['mCI']} mCi", p['Estado'], p['Notas']])
+        data.append([p['Nombre'], p['ID'], p['Entidad'], f"{p['mCI']} mCi", p['Estado'], p['Fecha_Recepcion']])
     
-    t = Table(data, colWidths=[130, 70, 80, 50, 70, 160])
+    t = Table(data, colWidths=[130, 70, 80, 50, 70, 100])
     t.setStyle(TableStyle([
         ('BACKGROUND',(0,0),(-1,0),colors.darkblue),
         ('TEXTCOLOR',(0,0),(-1,0),colors.whitesmoke),
         ('GRID',(0,0),(-1,-1),0.5,colors.grey),
-        ('FONTSIZE',(0,0),(-1,-1),7),
-        ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
+        ('FONTSIZE',(0,0),(-1,-1),8),
     ]))
     elementos.append(t)
     doc.build(elementos)
@@ -63,96 +62,99 @@ def generar_pdf(lista):
 if 'lista_local' not in st.session_state:
     st.session_state.lista_local = cargar_datos()
 
-t1, t2, t3 = st.tabs(["📋 Programación", "📦 Inventario y Trazabilidad", "🧮 Calculadora"])
+t1, t2, t3 = st.tabs(["📋 Programación", "📦 Inventario", "🧮 Calculadora"])
 
 # --- TAB 1: PROGRAMACIÓN ---
 with t1:
-    col_form, col_view = st.columns([1, 2])
-    
-    with col_form:
+    col_f, col_v = st.columns([1, 2])
+    with col_f:
         st.subheader("📝 Nuevo Registro")
-        # Usamos st.form con clear_on_submit=True para limpiar los campos automáticamente
-        with st.form("form_registro", clear_on_submit=True):
-            n = st.text_input("Nombre del Paciente").upper()
-            i = st.text_input("Cédula / ID")
+        with st.form("registro_limpio", clear_on_submit=True):
+            n = st.text_input("Nombre").upper()
+            i = st.text_input("Cédula")
             e = st.text_input("Entidad").upper()
-            d = st.number_input("Dosis (mCi)", 0.0, step=1.0)
-            f = st.date_input("Fecha de Aplicación").strftime("%d/%m/%Y")
-            
-            if st.form_submit_button("Sincronizar Pedido"):
-                if n and i:
-                    requests.get(SCRIPT_URL, params={"action":"register","nombre":n,"id":i,"entidad":e,"mci":d,"fecha":f})
-                    st.session_state.lista_local = cargar_datos()
-                    st.rerun()
+            d = st.number_input("Dosis (mCi)", 0.0)
+            f = st.date_input("Fecha Aplicación").strftime("%d/%m/%Y")
+            if st.form_submit_button("Sincronizar"):
+                requests.get(SCRIPT_URL, params={"action":"register","nombre":n,"id":i,"entidad":e,"mci":d,"fecha":f})
+                st.session_state.lista_local = cargar_datos()
+                st.rerun()
+        
+        # BOTÓN DE LIMPIEZA TOTAL RECUPERADO
+        st.divider()
+        if st.button("🚨 LIMPIAR PANTALLA / RESET SEMANA", use_container_width=True):
+            requests.post(SCRIPT_URL)
+            st.session_state.lista_local = []
+            st.rerun()
 
-    with col_view:
-        st.subheader("📊 Resumen de Programación")
+    with col_v:
+        st.subheader("📊 Inventario Programado")
         if st.session_state.lista_local:
             df = pd.DataFrame(st.session_state.lista_local)
-            
-            # --- CONTADOR DE YODO ---
-            total_prog = df[df['Estado'] != 'CANCELADO']['mCI'].apply(pd.to_numeric, errors='coerce').sum()
-            stock_inicial = 500.0 # Ajusta este valor según tu inventario semanal
-            disponible = stock_inicial - total_prog
-            
-            c_a, c_b = st.columns(2)
-            c_a.metric("Total Programado", f"{total_prog} mCi", delta_color="inverse")
-            c_b.metric("Disponible", f"{disponible} mCi")
-            
+            prog = df[df['Estado'] != 'CANCELADO']['mCI'].apply(pd.to_numeric).sum()
+            st.metric("Total Dosis Programada", f"{prog} mCi")
             st.dataframe(df[["Nombre", "ID", "mCI", "Estado"]], use_container_width=True)
-            
-            # Botón PDF en esta pestaña
-            pdf_p = generar_pdf(st.session_state.lista_local)
-            st.download_button("📄 Descargar Pedido PDF", data=pdf_p, 
-                               file_name=f"pedido_{datetime.now().strftime('%d_%m')}.pdf", use_container_width=True)
 
 # --- TAB 2: INVENTARIO ---
 with t2:
     if st.session_state.lista_local:
-        st.header("Control de Estados")
+        c_t, c_b = st.columns([2, 1])
+        c_t.header("Control de Dosis")
+        
+        # BOTÓN GENERAR RESUMEN GENERAL
+        resumen_pdf = generar_pdf(st.session_state.lista_local, "RESUMEN GENERAL DE INVENTARIO")
+        c_b.download_button("📄 GENERAR RESUMEN (PDF)", data=resumen_pdf, 
+                             file_name=f"resumen_{datetime.now().strftime('%d_%m')}.pdf", use_container_width=True)
+
         for idx, p in enumerate(st.session_state.lista_local):
             with st.expander(f"📍 {p['Nombre']} | {p['Estado']}"):
-                c1, c2 = st.columns(2)
-                est = c1.selectbox("Estado", ["PENDIENTE", "RECIBIDO", "APLICADO", "CANCELADO"], 
-                                 index=["PENDIENTE", "RECIBIDO", "APLICADO", "CANCELADO"].index(p.get('Estado', 'PENDIENTE')), key=f"e{idx}")
-                not_v = str(p.get('Notas', '')) if str(p.get('Notas', '')).lower() != 'nan' else ""
-                notas = c1.text_area("Observaciones", value=not_v, key=f"n{idx}")
+                col1, col2 = st.columns(2)
                 
-                if c1.button("💾 Guardar", key=f"b{idx}"):
-                    requests.get(SCRIPT_URL, params={"action":"update", "old_id":str(p['ID']).strip(), "estado":est, "notas":notas})
+                # Actualización de Estado
+                est = col1.selectbox("Cambiar Estado", ["PENDIENTE", "RECIBIDO", "APLICADO", "CANCELADO"], 
+                                   index=["PENDIENTE", "RECIBIDO", "APLICADO", "CANCELADO"].index(p.get('Estado', 'PENDIENTE')), key=f"e{idx}")
+                not_v = str(p.get('Notas', '')) if str(p.get('Notas', '')).lower() != 'nan' else ""
+                obs = col1.text_area("Observaciones", value=not_v, key=f"n{idx}")
+                
+                if col1.button("💾 Guardar", key=f"b{idx}"):
+                    requests.get(SCRIPT_URL, params={"action":"update", "old_id":str(p['ID']).strip(), "estado":est, "notas":obs})
                     st.session_state.lista_local = cargar_datos()
                     st.rerun()
 
+                # Reasignación con formulario completo
                 if p.get('Estado') == "CANCELADO":
-                    rn = c2.text_input("Nuevo Paciente", key=f"rn{idx}").upper()
-                    ri = c2.text_input("Nueva ID", key=f"ri{idx}")
-                    if c2.button("🔄 Reasignar Dosis", key=f"rb{idx}"):
-                        hist = f"Dosis de: {p['Nombre']}. Motivo: {notas}"
-                        requests.get(SCRIPT_URL, params={"action":"reasignar","old_id":str(p['ID']).strip(),"nombre":rn,"id":ri,"entidad":p['Entidad'],"mci":p['mCI'],"fecha":p['Fecha_Capsula'],"notas":hist})
+                    col2.warning("Reasignación de Dosis")
+                    rn = col2.text_input("Nuevo Nombre", key=f"rn{idx}").upper()
+                    ri = col2.text_input("Nueva ID", key=f"ri{idx}")
+                    re = col2.text_input("Entidad (Heredada)", value=p['Entidad'], key=f"re{idx}").upper()
+                    if col2.button("🔄 Confirmar Reasignación", key=f"rb{idx}"):
+                        hist = f"Original: {p['Nombre']}. Motivo: {obs}"
+                        # Pasamos todos los datos técnicos del paciente original
+                        params = {
+                            "action": "reasignar",
+                            "old_id": str(p['ID']).strip(),
+                            "nombre": rn, "id": ri, "entidad": re,
+                            "mci": p['mCI'], "fecha": p['Fecha_Capsula'],
+                            "notas": hist
+                        }
+                        requests.get(SCRIPT_URL, params=params)
                         st.session_state.lista_local = cargar_datos()
                         st.rerun()
 
 # --- TAB 3: CALCULADORA ---
 with t3:
-    st.header("🧮 Calculadora de Decaimiento Radiactivo")
-    col1, col2 = st.columns(2)
+    st.header("🧮 Calculadora de Decaimiento")
+    c1, c2 = st.columns(2)
+    ai = c1.number_input("Actividad Inicial", value=100.0)
+    fc = c1.date_input("Fecha Calibración")
+    hc = c1.time_input("Hora Calibración")
+    ff = c2.date_input("Fecha Futura")
+    hf = c2.time_input("Hora Futura")
     
-    act_i = col1.number_input("Actividad Inicial (mCi)", value=100.0)
-    f_cal = col1.date_input("Fecha Calibración")
-    h_cal = col1.time_input("Hora Calibración")
-    
-    f_fut = col2.date_input("Fecha a Calcular")
-    h_fut = col2.time_input("Hora a Calcular")
-    
-    dt_i = datetime.combine(f_cal, h_cal)
-    dt_f = datetime.combine(f_fut, h_fut)
-    
-    horas = (dt_f - dt_i).total_seconds() / 3600
-    
-    if horas >= 0:
-        # Fórmula: A = Ao * e^(-ln2 * t / T1/2)
-        act_f = act_i * math.exp(-math.log(2) * horas / (HL_YODO * 24))
-        st.metric("Actividad Resultante", f"{round(act_f, 2)} mCi")
-        st.info(f"Tiempo transcurrido: {round(horas, 1)} horas.")
-    else:
-        st.error("La fecha futura debe ser posterior a la de calibración.")
+    dt1 = datetime.combine(fc, hc)
+    dt2 = datetime.combine(ff, hf)
+    h = (dt2 - dt1).total_seconds() / 3600
+    if h >= 0:
+        af = ai * math.exp(-math.log(2) * h / (HL_YODO * 24))
+        st.metric("Resultado", f"{round(af, 2)} mCi")
+    else: st.error("La fecha debe ser posterior.")
