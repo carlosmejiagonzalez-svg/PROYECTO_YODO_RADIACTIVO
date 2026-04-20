@@ -1,5 +1,6 @@
 streamlit
 pandas
-pytz
-reportlab
 requests
+pytz
+st-gsheets-connection
+reportlab
