@@ -94,7 +94,7 @@ with t1:
             n, i, e = st.text_input("Nombre").upper(), st.text_input("Cédula"), st.text_input("Entidad").upper()
             d = st.number_input("Dosis mCi", 0.0)
             f = st.date_input("Fecha Toma de Cápsula").strftime("%d/%m/%Y")
-            if st.form_submit_button("Sincronizar Pedido"):
+            if st.form_submit_button("Agregar Paciente"):
                 requests.get(SCRIPT_URL, params={"action":"register","nombre":n,"id":i,"entidad":e,"mci":d,"fecha":f})
                 st.session_state.lista_local = cargar_datos(); st.rerun()
         st.divider()
