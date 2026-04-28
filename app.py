@@ -12,7 +12,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
-# URL INTEGRADA
+# URL de tu Apps Script
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz8FcolZ346Fg3pL_yU1WPpMh4T2NHrR0t0HhAm-0VBDJbrZ7fO78jTKEVcrnfCK54/exec"
 LOGO_PATH = "logo.png"
 
@@ -22,16 +22,17 @@ HL_YODO = 8.02
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-def cargar_datos(nombre_hoja):
+def cargar_datos(indice_hoja):
     try:
-        df = conn.read(worksheet=nombre_hoja, ttl=0)
+        # Cargamos por índice (0 o 1) para evitar errores de nombre de pestaña
+        df = conn.read(worksheet=indice_hoja, ttl=0)
         if df is not None and not df.empty:
             df.columns = [str(c).strip() for c in df.columns]
             if "ID" in df.columns:
                 df["ID"] = df["ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
             return df.to_dict('records')
     except Exception as e:
-        st.error(f"Error: No se encuentra la pestaña '{nombre_hoja}' en el Excel.")
+        st.error(f"Error de conexión: No se pudo leer la hoja número {indice_hoja + 1}.")
     return []
 
 def generar_pdf(lista, tipo="PEDIDO"):
@@ -67,7 +68,7 @@ def generar_pdf(lista, tipo="PEDIDO"):
 
 t1, t2, t3, t4 = st.tabs(["👥 Base de Datos", "📅 Programar Semana", "📦 Inventario", "🧮 Calculadora"])
 
-# --- PESTAÑA 1: BASE DE DATOS ---
+# --- PESTAÑA 1: BASE DE DATOS (Hoja índice 1) ---
 with t1:
     st.subheader("📝 Registro de Pacientes en Espera")
     with st.form("f_maestro", clear_on_submit=True):
@@ -83,26 +84,26 @@ with t1:
             st.success(f"Paciente {n} registrado."); st.rerun()
     
     st.divider()
-    lista_base = cargar_datos("Base_Datos")
+    lista_base = cargar_datos(1) # Índice 1 = Segunda pestaña
     if lista_base:
-        st.write("### Listado de Espera")
+        st.write("### Listado de Pacientes en Base de Datos")
         st.dataframe(pd.DataFrame(lista_base), use_container_width=True)
 
-# --- PESTAÑA 2: PROGRAMACIÓN SEMANAL ---
+# --- PESTAÑA 2: PROGRAMACIÓN SEMANAL (Hoja índice 0) ---
 with t2:
     st.subheader("🚀 Activar Paciente para la Semana")
-    lista_base = cargar_datos("Base_Datos")
+    lista_base = cargar_datos(1)
     if lista_base:
         df_b = pd.DataFrame(lista_base)
         opciones = df_b['Nombre'] + " (" + df_b['ID'].astype(str) + ")"
-        pac_sel = st.selectbox("Seleccionar paciente para mover", opciones)
+        pac_sel = st.selectbox("Seleccionar paciente de la base", opciones)
         if st.button("Confirmar Programación"):
             id_ext = pac_sel.split("(")[1].replace(")","").strip()
             requests.get(SCRIPT_URL, params={"action":"programar_desde_base", "id":id_ext})
             st.cache_data.clear(); st.rerun()
     
     st.divider()
-    lista_sem = cargar_datos("Hoja 1")
+    lista_sem = cargar_datos(0) # Índice 0 = Primera pestaña
     if lista_sem:
         df_s = pd.DataFrame(lista_sem)
         total = pd.to_numeric(df_s[~df_s['Estado'].isin(['CANCELADO', 'DECAIMIENTO'])]['mCI'], errors='coerce').sum()
@@ -122,8 +123,8 @@ with t2:
 
 # --- PESTAÑA 3: INVENTARIO ---
 with t3:
-    st.subheader("📦 Trazabilidad")
-    lista_sem = cargar_datos("Hoja 1")
+    st.subheader("📦 Trazabilidad de Dosis")
+    lista_sem = cargar_datos(0)
     if lista_sem:
         st.download_button("📑 REPORTE TRAZABILIDAD", data=generar_pdf(lista_sem, "TRAZABILIDAD"), file_name="trazabilidad.pdf", use_container_width=True)
         for idx, p in enumerate(lista_sem):
@@ -135,19 +136,13 @@ with t3:
                 if col_a.button("💾 Guardar", key=f"sv_{idx}"):
                     requests.get(SCRIPT_URL, params={"action":"update", "old_id":p['ID'], "estado":est, "notas":obs, "fecha_administracion":f_adm})
                     st.cache_data.clear(); st.rerun()
-                if p.get('Estado') == "CANCELADO":
-                    col_b.info("🔄 Reasignación")
-                    rn, ri = col_b.text_input("Nuevo Nombre", key=f"rn_{idx}"), col_b.text_input("Nueva ID", key=f"ri_{idx}")
-                    if col_b.button("Traspasar", key=f"tr_{idx}"):
-                        requests.get(SCRIPT_URL, params={"action":"reasignar", "nombre":rn, "id":ri, "entidad":p['Entidad'], "mci":p['mCI'], "fecha":p['Fecha_Capsula'], "notas":f"Cedido por {p['Nombre']}"})
-                        st.cache_data.clear(); st.rerun()
 
 # --- PESTAÑA 4: CALCULADORA ---
 with t4:
-    st.header("🧮 Calculadora")
+    st.header("🧮 Calculadora de Decaimiento")
     ai = st.number_input("Actividad Inicial", value=100.0)
-    fc, hc = st.date_input("F. Calib"), st.time_input("H. Calib")
-    ff, hf = st.date_input("F. Calc"), st.time_input("H. Calc")
+    fc, hc = st.date_input("F. Calibración"), st.time_input("H. Calibración")
+    ff, hf = st.date_input("F. Cálculo"), st.time_input("H. Cálculo")
     diff = (datetime.combine(ff, hf) - datetime.combine(fc, hc)).total_seconds() / 3600
     if diff >= 0:
         af = ai * math.exp(-math.log(2) * diff / (HL_YODO * 24))
