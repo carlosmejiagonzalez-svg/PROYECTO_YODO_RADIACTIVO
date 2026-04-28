@@ -12,7 +12,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
-SCRIPT_URL = "TU_URL_AQUÍ"
+SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz8FcolZ346Fg3pL_yU1WPpMh4T2NHrR0t0HhAm-0VBDJbrZ7fO78jTKEVcrnfCK54/exec"
 LOGO_PATH = "logo.png"
 st.set_page_config(page_title="Nuclear 2000 Ltda", layout="wide")
 colombia_tz = pytz.timezone('America/Bogota')
