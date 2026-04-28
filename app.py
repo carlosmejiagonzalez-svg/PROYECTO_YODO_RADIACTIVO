@@ -1,77 +1,37 @@
 import streamlit as st
 import pandas as pd
 import requests
-from datetime import datetime
-import pytz
-import math
-import io
-import os
 from streamlit_gsheets import GSheetsConnection
-from reportlab.lib.pagesizes import letter, landscape
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib import colors
 
 # URL de tu Apps Script
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz8FcolZ346Fg3pL_yU1WPpMh4T2NHrR0t0HhAm-0VBDJbrZ7fO78jTKEVcrnfCK54/exec"
-LOGO_PATH = "logo.png"
 
 st.set_page_config(page_title="Nuclear 2000 Ltda", layout="wide")
-colombia_tz = pytz.timezone('America/Bogota')
-HL_YODO = 8.02 
 
+# Conexión principal
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-def cargar_datos(indice_hoja):
+def cargar_datos_seguro(nombre_pestaña, indice):
     try:
-        # Cargamos por índice (0 o 1) para evitar errores de nombre de pestaña
-        df = conn.read(worksheet=indice_hoja, ttl=0)
-        if df is not None and not df.empty:
-            df.columns = [str(c).strip() for c in df.columns]
-            if "ID" in df.columns:
-                df["ID"] = df["ID"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-            return df.to_dict('records')
-    except Exception as e:
-        st.error(f"Error de conexión: No se pudo leer la hoja número {indice_hoja + 1}.")
-    return []
+        # Intento 1: Por nombre (más legible)
+        df = conn.read(worksheet=nombre_pestaña, ttl=0)
+        return df
+    except:
+        try:
+            # Intento 2: Por índice (físico) si el nombre falla
+            df = conn.read(worksheet=indice, ttl=0)
+            return df
+        except Exception as e:
+            st.error(f"Error crítico: No se pudo acceder a la hoja {nombre_pestaña}. Revisa si la pestaña existe en el Excel.")
+            return None
 
-def generar_pdf(lista, tipo="PEDIDO"):
-    buffer = io.BytesIO()
-    orientacion = letter if tipo == "PEDIDO" else landscape(letter)
-    doc = SimpleDocTemplate(buffer, pagesize=orientacion, rightMargin=20, leftMargin=20, topMargin=30, bottomMargin=30)
-    elementos = []
-    styles = getSampleStyleSheet()
-    if os.path.exists(LOGO_PATH):
-        img = Image(LOGO_PATH, width=80, height=40); img.hAlign = 'LEFT'; elementos.append(img)
-    titulo = "PROGRAMACIÓN PEDIDO YODO I131" if tipo == "PEDIDO" else "REPORTE DE TRAZABILIDAD"
-    elementos.append(Paragraph(f"<b>{titulo}</b>", ParagraphStyle('T', parent=styles['Title'], fontSize=15, textColor=colors.HexColor("#1A237E"))))
-    elementos.append(Spacer(1, 15))
-    
-    if tipo == "PEDIDO":
-        data = [["PACIENTE", "IDENTIFICACIÓN", "ENTIDAD", "FECHA TOMA", "mCi"]]
-        for p in lista:
-            if p.get('Estado') not in ["CANCELADO", "DECAIMIENTO"]:
-                data.append([p['Nombre'], p['ID'], p['Entidad'], p.get('Fecha_Capsula',''), p['mCI']])
-        col_widths = [180, 100, 120, 80, 50]
-    else:
-        data = [["PACIENTE / ID", "ENTIDAD", "mCI", "ESTADO", "F. RECEPCIÓN", "F. ADMIN.", "OBSERVACIONES"]]
-        for p in lista:
-            data.append([Paragraph(f"<b>{p['Nombre']}</b><br/>{p['ID']}", styles['Normal']), p['Entidad'], p['mCI'], p['Estado'], p.get('Fecha_Recepcion',''), p.get('Fecha_Administracion',''), Paragraph(str(p.get('Notas','')), styles['Normal'])])
-        col_widths = [140, 90, 40, 80, 85, 85, 200]
-
-    t = Table(data, colWidths=col_widths)
-    t.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1A237E")), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke), ('GRID', (0, 0), (-1, -1), 0.5, colors.grey), ('FONTSIZE', (0, 0), (-1, -1), 8), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE')]))
-    elementos.append(t)
-    doc.build(elementos)
-    buffer.seek(0)
-    return buffer
-
+# --- ESTRUCTURA DE TABS ---
 t1, t2, t3, t4 = st.tabs(["👥 Base de Datos", "📅 Programar Semana", "📦 Inventario", "🧮 Calculadora"])
 
-# --- PESTAÑA 1: BASE DE DATOS (Hoja índice 1) ---
 with t1:
     st.subheader("📝 Registro de Pacientes en Espera")
-    with st.form("f_maestro", clear_on_submit=True):
+    # Formulario de registro...
+    with st.form("f_registro", clear_on_submit=True):
         col1, col2 = st.columns(2)
         n = col1.text_input("Nombre Completo").upper()
         i = col1.text_input("Identificación")
@@ -79,71 +39,34 @@ with t1:
         d = col2.number_input("Dosis mCi", 0.0)
         f = st.date_input("Fecha Tentativa").strftime("%d/%m/%Y")
         if st.form_submit_button("Guardar en Base de Datos"):
-            requests.get(SCRIPT_URL, params={"action":"crear_maestro","nombre":n,"id":i,"entidad":e,"mci":d,"fecha":f})
-            st.cache_data.clear()
-            st.success(f"Paciente {n} registrado."); st.rerun()
-    
-    st.divider()
-    lista_base = cargar_datos(1) # Índice 1 = Segunda pestaña
-    if lista_base:
-        st.write("### Listado de Pacientes en Base de Datos")
-        st.dataframe(pd.DataFrame(lista_base), use_container_width=True)
+            if n and i:
+                requests.get(SCRIPT_URL, params={"action":"crear_maestro","nombre":n,"id":i,"entidad":e,"mci":d,"fecha":f})
+                st.cache_data.clear()
+                st.success("Registrado con éxito"); st.rerun()
 
-# --- PESTAÑA 2: PROGRAMACIÓN SEMANAL (Hoja índice 0) ---
+    st.divider()
+    # Cargamos la pestaña 2 (Base_Datos)
+    df_base = cargar_datos_seguro("Base_Datos", 1)
+    if df_base is not None and not df_base.empty:
+        st.dataframe(df_base, use_container_width=True)
+
 with t2:
-    st.subheader("🚀 Activar Paciente para la Semana")
-    lista_base = cargar_datos(1)
-    if lista_base:
-        df_b = pd.DataFrame(lista_base)
-        opciones = df_b['Nombre'] + " (" + df_b['ID'].astype(str) + ")"
-        pac_sel = st.selectbox("Seleccionar paciente de la base", opciones)
-        if st.button("Confirmar Programación"):
+    st.subheader("🚀 Pasar Paciente a la Lista Semanal")
+    df_base = cargar_datos_seguro("Base_Datos", 1)
+    if df_base is not None and not df_base.empty:
+        # Limpieza de IDs para evitar el .0
+        df_base['ID'] = df_base['ID'].astype(str).str.replace(r'\.0$', '', regex=True)
+        opciones = df_base['Nombre'] + " (" + df_base['ID'] + ")"
+        pac_sel = st.selectbox("Seleccionar paciente para activar", opciones)
+        
+        if st.button("Mover a Programación"):
             id_ext = pac_sel.split("(")[1].replace(")","").strip()
             requests.get(SCRIPT_URL, params={"action":"programar_desde_base", "id":id_ext})
             st.cache_data.clear(); st.rerun()
     
     st.divider()
-    lista_sem = cargar_datos(0) # Índice 0 = Primera pestaña
-    if lista_sem:
-        df_s = pd.DataFrame(lista_sem)
-        total = pd.to_numeric(df_s[~df_s['Estado'].isin(['CANCELADO', 'DECAIMIENTO'])]['mCI'], errors='coerce').sum()
-        st.metric("Total mCi del Pedido", f"{total} mCi")
-        
-        c_a, c_b = st.columns(2)
-        c_a.download_button("📄 IMPRIMIR PEDIDO (PDF)", data=generar_pdf(lista_sem, "PEDIDO"), file_name="pedido.pdf", use_container_width=True)
-        if c_b.button("🚨 LIMPIAR LISTA SEMANAL", use_container_width=True):
-            requests.post(SCRIPT_URL); st.cache_data.clear(); st.rerun()
-        
-        for p in lista_sem:
-            cx, cy = st.columns([4, 1])
-            cx.write(f"**{p['Nombre']}** - {p.get('Fecha_Capsula','')} - {p['mCI']} mCi")
-            if cy.button("Borrar", key=f"d_{p['ID']}"):
-                requests.get(SCRIPT_URL, params={"action":"borrar_paciente", "id":p['ID']})
-                st.cache_data.clear(); st.rerun()
-
-# --- PESTAÑA 3: INVENTARIO ---
-with t3:
-    st.subheader("📦 Trazabilidad de Dosis")
-    lista_sem = cargar_datos(0)
-    if lista_sem:
-        st.download_button("📑 REPORTE TRAZABILIDAD", data=generar_pdf(lista_sem, "TRAZABILIDAD"), file_name="trazabilidad.pdf", use_container_width=True)
-        for idx, p in enumerate(lista_sem):
-            with st.expander(f"📍 {p['Nombre']} | {p['Estado']}"):
-                col_a, col_b = st.columns(2)
-                est = col_a.selectbox("Estado", ["PENDIENTE", "RECIBIDO", "ADMINISTRADA", "CANCELADO", "DECAIMIENTO"], key=f"st_{idx}")
-                f_adm = col_a.date_input("Fecha Admin", key=f"f_adm_{idx}").strftime("%d/%m/%Y") if est == "ADMINISTRADA" else ""
-                obs = col_a.text_area("Notas", value=str(p.get('Notas','')) if str(p.get('Notas',''))!='nan' else "", key=f"nt_{idx}")
-                if col_a.button("💾 Guardar", key=f"sv_{idx}"):
-                    requests.get(SCRIPT_URL, params={"action":"update", "old_id":p['ID'], "estado":est, "notas":obs, "fecha_administracion":f_adm})
-                    st.cache_data.clear(); st.rerun()
-
-# --- PESTAÑA 4: CALCULADORA ---
-with t4:
-    st.header("🧮 Calculadora de Decaimiento")
-    ai = st.number_input("Actividad Inicial", value=100.0)
-    fc, hc = st.date_input("F. Calibración"), st.time_input("H. Calibración")
-    ff, hf = st.date_input("F. Cálculo"), st.time_input("H. Cálculo")
-    diff = (datetime.combine(ff, hf) - datetime.combine(fc, hc)).total_seconds() / 3600
-    if diff >= 0:
-        af = ai * math.exp(-math.log(2) * diff / (HL_YODO * 24))
-        st.metric("Resultado", f"{round(af, 2)} mCi")
+    # Cargamos la pestaña 1 (Hoja 1)
+    df_sem = cargar_datos_seguro("Hoja 1", 0)
+    if df_sem is not None and not df_sem.empty:
+        st.write("### Pacientes Programados")
+        st.table(df_sem[['Nombre', 'ID', 'Entidad', 'mCI']])
