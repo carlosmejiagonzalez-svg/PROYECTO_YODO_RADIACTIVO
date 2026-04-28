@@ -12,8 +12,10 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
+# CONFIGURACIÓN - REEMPLAZAR CON TU URL REAL
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz8FcolZ346Fg3pL_yU1WPpMh4T2NHrR0t0HhAm-0VBDJbrZ7fO78jTKEVcrnfCK54/exec"
 LOGO_PATH = "logo.png"
+
 st.set_page_config(page_title="Nuclear 2000 Ltda", layout="wide")
 colombia_tz = pytz.timezone('America/Bogota')
 HL_YODO = 8.02 
@@ -64,6 +66,7 @@ def generar_pdf(lista, tipo="PEDIDO"):
 
 t1, t2, t3, t4 = st.tabs(["👥 Base de Datos", "📅 Programar Semana", "📦 Inventario", "🧮 Calculadora"])
 
+# --- PESTAÑA 1: BASE DE DATOS ---
 with t1:
     st.subheader("📝 Registrar Paciente en Espera")
     with st.form("f_maestro", clear_on_submit=True):
@@ -75,67 +78,72 @@ with t1:
         f = st.date_input("Fecha Tentativa de Toma").strftime("%d/%m/%Y")
         if st.form_submit_button("Guardar en Base de Datos"):
             requests.get(SCRIPT_URL, params={"action":"crear_maestro","nombre":n,"id":i,"entidad":e,"mci":d,"fecha":f})
-            st.success("Paciente guardado"); st.rerun()
-    st.write("---")
+            st.success(f"Paciente {n} guardado exitosamente"); st.rerun()
+    st.divider()
     lista_base = cargar_datos(hoja=1)
-    if lista_base: st.table(pd.DataFrame(lista_base))
+    if lista_base:
+        st.subheader("Pacientes actualmente en espera")
+        st.table(pd.DataFrame(lista_base)[["Nombre", "ID", "Entidad", "Fecha_Capsula", "mCI"]])
 
+# --- PESTAÑA 2: PROGRAMACIÓN SEMANAL ---
 with t2:
-    st.subheader("🚀 Programación de la Semana")
+    st.subheader("🚀 Pasar Paciente a la Lista de la Semana")
     lista_base = cargar_datos(hoja=1)
     if lista_base:
         df_b = pd.DataFrame(lista_base)
-        pac_sel = st.selectbox("Seleccionar para esta semana", df_b['Nombre'] + " (" + df_b['ID'] + ")")
+        pac_sel = st.selectbox("Seleccionar paciente para activar", df_b['Nombre'] + " (" + df_b['ID'] + ")")
         if st.button("Confirmar Programación"):
             requests.get(SCRIPT_URL, params={"action":"programar_desde_base", "id":pac_sel.split("(")[1].replace(")","")})
-            st.rerun()
+            st.success("Movido a Programación Semanal"); st.rerun()
     
     st.divider()
     lista_sem = cargar_datos(hoja=0)
     if lista_sem:
-        df_s = pd.DataFrame(lista_semanal)
-        total = pd.to_numeric(df_s[~df_s['Estado'].isin(['CANCELADO'])]['mCI']).sum()
-        st.metric("Total mCi Pedido", f"{total} mCi")
+        df_s = pd.DataFrame(lista_sem)
+        total = pd.to_numeric(df_s[~df_s['Estado'].isin(['CANCELADO', 'DECAIMIENTO'])]['mCI'], errors='coerce').sum()
+        st.metric("Total mCi Pedido para la Semana", f"{total} mCi")
         
         c_a, c_b = st.columns(2)
         c_a.download_button("📄 IMPRIMIR PEDIDO (PDF)", data=generar_pdf(lista_sem, "PEDIDO"), file_name="pedido.pdf", use_container_width=True)
-        if c_b.button("🚨 LIMPIAR TODA LA PANTALLA", use_container_width=True):
+        if c_b.button("🚨 LIMPIAR TODA LA LISTA SEMANAL", use_container_width=True):
             requests.post(SCRIPT_URL); st.rerun()
         
         for p in lista_sem:
             col_x, col_y = st.columns([4, 1])
-            col_x.write(f"**{p['Nombre']}** - {p['Fecha_Capsula']} - {p['mCI']} mCi")
+            col_x.write(f"**{p['Nombre']}** - {p.get('Fecha_Capsula','')} - {p['mCI']} mCi")
             if col_y.button("Eliminar", key=f"del_{p['ID']}"):
                 requests.get(SCRIPT_URL, params={"action":"borrar_paciente", "id":p['ID']})
                 st.rerun()
 
+# --- PESTAÑA 3: INVENTARIO ---
 with t3:
     st.subheader("📦 Trazabilidad e Inventario")
     lista_sem = cargar_datos(hoja=0)
     if lista_sem:
-        st.download_button("📑 REPORTE TRAZABILIDAD", data=generar_pdf(lista_sem, "TRAZABILIDAD"), file_name="trazabilidad.pdf", use_container_width=True)
+        st.download_button("📑 REPORTE TRAZABILIDAD COMPLETO", data=generar_pdf(lista_sem, "TRAZABILIDAD"), file_name="trazabilidad.pdf", use_container_width=True)
         for idx, p in enumerate(lista_sem):
             with st.expander(f"📍 {p['Nombre']} | {p['Estado']}"):
                 col_a, col_b = st.columns(2)
                 est = col_a.selectbox("Estado", ["PENDIENTE", "RECIBIDO", "ADMINISTRADA", "CANCELADO", "DECAIMIENTO"], index=0, key=f"s_{idx}")
                 f_adm = col_a.date_input("Fecha Admin", key=f"fa_{idx}").strftime("%d/%m/%Y") if est == "ADMINISTRADA" else ""
                 obs = col_a.text_area("Notas", value=str(p.get('Notas','')) if str(p.get('Notas',''))!='nan' else "", key=f"o_{idx}")
-                if col_a.button("💾 Guardar", key=f"g_{idx}"):
+                if col_a.button("💾 Guardar Cambios", key=f"g_{idx}"):
                     requests.get(SCRIPT_URL, params={"action":"update", "old_id":p['ID'], "estado":est, "notas":obs, "fecha_administracion":f_adm})
                     st.rerun()
                 if p.get('Estado') == "CANCELADO":
                     col_b.info("🔄 Reasignar Dosis")
                     rn, ri = col_b.text_input("Nuevo Nombre", key=f"rn_{idx}"), col_b.text_input("Nueva ID", key=f"ri_{idx}")
-                    if col_b.button("Traspasar", key=f"tr_{idx}"):
+                    if col_b.button("Confirmar Traspaso", key=f"tr_{idx}"):
                         requests.get(SCRIPT_URL, params={"action":"reasignar", "nombre":rn, "id":ri, "entidad":p['Entidad'], "mci":p['mCI'], "fecha":p['Fecha_Capsula'], "notas":f"Cedido por {p['Nombre']}"})
                         st.rerun()
 
+# --- PESTAÑA 4: CALCULADORA ---
 with t4:
-    st.header("🧮 Calculadora")
+    st.header("🧮 Calculadora de Decaimiento I-131")
     ai = st.number_input("Actividad Inicial (mCi)", value=100.0)
-    fc, hc = st.date_input("Fecha Calib"), st.time_input("Hora Calib")
-    ff, hf = st.date_input("Fecha Calc"), st.time_input("Hora Calc")
+    fc, hc = st.date_input("Fecha Calibración"), st.time_input("Hora Calibración")
+    ff, hf = st.date_input("Fecha Cálculo"), st.time_input("Hora Cálculo")
     diff = (datetime.combine(ff, hf) - datetime.combine(fc, hc)).total_seconds() / 3600
     if diff >= 0:
         af = ai * math.exp(-math.log(2) * diff / (HL_YODO * 24))
-        st.metric("Actividad Final", f"{round(af, 2)} mCi")
+        st.metric("Actividad Final Estimada", f"{round(af, 2)} mCi")
