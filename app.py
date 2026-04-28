@@ -103,10 +103,26 @@ with t1:
     with c2:
         if st.session_state.lista_local:
             df = pd.DataFrame(st.session_state.lista_local)
-            total_mci = pd.to_numeric(df[~df['Estado'].isin(['CANCELADO', 'DECAIMIENTO'])]['mCI'], errors='coerce').sum()
+            # Solo mostrar los que no están cancelados o en decaimiento
+            pacientes_activos = df[~df['Estado'].isin(['CANCELADO', 'DECAIMIENTO'])]
+            
+            total_mci = pd.to_numeric(pacientes_activos['mCI'], errors='coerce').sum()
             st.metric("Total mCi Pedido", f"{total_mci} mCi")
+            
             st.download_button("📄 DESCARGAR PEDIDO", data=generar_pdf(st.session_state.lista_local, "PEDIDO"), file_name="pedido.pdf", use_container_width=True)
-            st.dataframe(df[~df['Estado'].isin(['CANCELADO', 'DECAIMIENTO'])][["Nombre", "ID", "mCI", "Fecha_Capsula"]], use_container_width=True)
+            
+            st.write("---")
+            # Lista con botón de eliminar para cada paciente
+            for _, fila in pacientes_activos.iterrows():
+                col_nombre, col_btn = st.columns([3, 1])
+                col_nombre.write(f"**{fila['Nombre']}** ({fila['mCI']} mCi)")
+                
+                # Botón de eliminar con una llave única (ID)
+                if col_btn.button("🗑️ Borrar", key=f"del_{fila['ID']}"):
+                    requests.get(SCRIPT_URL, params={"action": "borrar_paciente", "id": fila['ID']})
+                    st.success(f"Eliminado: {fila['Nombre']}")
+                    st.session_state.lista_local = cargar_datos() # Recargar datos
+                    st.rerun()
 
 # --- PESTAÑA 2: INVENTARIO Y REASIGNACIÓN ---
 with t2:
