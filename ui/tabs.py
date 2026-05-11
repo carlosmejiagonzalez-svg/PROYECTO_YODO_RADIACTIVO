@@ -116,9 +116,19 @@ def render_programacion():
         if agendados.empty:
             st.info("No hay pacientes agendados para esta semana.")
         else:
+            LIMITE_MCI = 150.0
             total_mci = pd.to_numeric(agendados["mCI"], errors="coerce").sum()
+            restante = LIMITE_MCI - total_mci
+            porcentaje = min((total_mci / LIMITE_MCI) * 100, 100)
+
             col_met, col_pdf = st.columns([1, 2])
-            col_met.metric("Total mCi Pedido", f"{total_mci:.1f} mCi")
+            with col_met:
+                st.metric(
+                    "Total mCi Pedido",
+                    f"{total_mci:.1f} mCi",
+                    delta=f"{restante:.1f} mCi disponibles",
+                    delta_color="normal" if restante > 0 else "inverse",
+                )
             with col_pdf:
                 pdf_bytes = generar_pdf_pedido(lista)
                 st.download_button(
@@ -128,6 +138,16 @@ def render_programacion():
                     mime="application/pdf",
                     use_container_width=True,
                 )
+
+            # ── Barra de progreso con alerta ──
+            st.progress(int(porcentaje))
+
+            if total_mci >= LIMITE_MCI:
+                st.error(f"🚨 **LÍMITE ALCANZADO** — El pedido ha llegado a {total_mci:.1f} mCi. No se pueden agendar más pacientes para esta semana.")
+            elif total_mci >= LIMITE_MCI * 0.85:
+                st.warning(f"⚠️ **ATENCIÓN** — Llevas {total_mci:.1f} mCi de {LIMITE_MCI:.0f} mCi permitidos. Solo quedan {restante:.1f} mCi disponibles.")
+            else:
+                st.success(f"✅ Capacidad disponible: {restante:.1f} mCi restantes de {LIMITE_MCI:.0f} mCi permitidos.")
 
             st.write("")
             for idx, fila in agendados.iterrows():
