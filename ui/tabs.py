@@ -153,7 +153,14 @@ def render_inventario():
         st.info("No hay datos para mostrar.")
         return
 
-    pdf_bytes = generar_pdf_trazabilidad(lista)
+    # Solo mostrar pacientes que ya fueron agendados
+    lista_agendados = [p for p in lista if str(p.get("Agendado", "NO")) == "SI"]
+
+    if not lista_agendados:
+        st.info("No hay pacientes agendados aún. Agenda pacientes desde la pestaña de Programación.")
+        return
+
+    pdf_bytes = generar_pdf_trazabilidad(lista_agendados)
     st.download_button(
         "📑 Reporte de Trazabilidad Completo (PDF)",
         data=pdf_bytes,
@@ -163,8 +170,8 @@ def render_inventario():
 
     st.divider()
 
-    for idx, p in enumerate(lista):
-        estado_actual = p.get("Estado", "PENDIENTE AGENDAR")
+    for idx, p in enumerate(lista_agendados):
+        estado_actual = p.get("Estado", "PENDIENTE")
         emoji = {
             "PENDIENTE AGENDAR": "🕐",
             "PENDIENTE": "🟡",
@@ -179,10 +186,9 @@ def render_inventario():
 
             with col_a:
                 st.markdown("**Actualizar estado**")
-                estados_opciones = ["PENDIENTE AGENDAR"] + ESTADOS_VALIDOS
                 nuevo_estado = st.selectbox(
-                    "Estado", estados_opciones,
-                    index=estados_opciones.index(estado_actual) if estado_actual in estados_opciones else 0,
+                    "Estado", ESTADOS_VALIDOS,
+                    index=ESTADOS_VALIDOS.index(estado_actual) if estado_actual in ESTADOS_VALIDOS else 0,
                     key=f"s_{idx}",
                 )
 
@@ -228,8 +234,6 @@ def render_inventario():
                     st.write(f"📅 Fecha Recepción: `{p.get('Fecha_Recepcion', '—')}`")
                     st.write(f"📅 Fecha Admin.: `{p.get('Fecha_Administracion', '—')}`")
                     st.write(f"💊 Dosis: `{p.get('mCI', '—')} mCi`")
-                    agendado = str(p.get("Agendado", "NO"))
-                    st.write(f"📋 Agendado: `{'Sí' if agendado == 'SI' else 'No'}`")
 
 
 def render_calculadora():
