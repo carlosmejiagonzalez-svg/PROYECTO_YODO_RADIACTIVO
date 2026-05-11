@@ -64,16 +64,14 @@ def render_programacion():
 
         df = pd.DataFrame(lista)
 
-        # ── Asegurar que exista la columna Agendado ──
         if "Agendado" not in df.columns:
             df["Agendado"] = "NO"
 
-        # ── Separar en dos grupos ──
-        pendientes = df[df["Agendado"] != "SI"].copy()
+        pendientes = df[df["Agendado"] != "SI"].copy().reset_index(drop=True)
         agendados = df[
             (df["Agendado"] == "SI") &
             (~df["Estado"].isin(["CANCELADO", "DECAIMIENTO"]))
-        ].copy()
+        ].copy().reset_index(drop=True)
 
         # ═══════════════════════════════════════════
         # SECCIÓN 1 — Pendientes por agendar
@@ -83,18 +81,26 @@ def render_programacion():
         if pendientes.empty:
             st.info("No hay pacientes pendientes por agendar.")
         else:
-            for _, fila in pendientes.iterrows():
+            for idx, fila in pendientes.iterrows():
                 col_info, col_agendar, col_borrar = st.columns([4, 2, 1])
                 col_info.markdown(
                     f"**{fila['Nombre']}** · {fila['Entidad']} · "
                     f"`{fila['mCI']} mCi` · 📅 {fila.get('Fecha_Capsula', '')}"
                 )
-                if col_agendar.button("📅 Agendar", key=f"ag_{fila['ID']}", use_container_width=True):
+                if col_agendar.button(
+                    "📅 Agendar",
+                    key=f"ag_{idx}_{fila['ID']}",
+                    use_container_width=True
+                ):
                     ok = agendar_paciente(str(fila["ID"]))
                     if ok:
                         st.session_state.lista_local = cargar_datos()
                         st.rerun()
-                if col_borrar.button("🗑️", key=f"del_{fila['ID']}", help="Eliminar paciente"):
+                if col_borrar.button(
+                    "🗑️",
+                    key=f"del_p_{idx}_{fila['ID']}",
+                    help="Eliminar paciente"
+                ):
                     ok = borrar_paciente(str(fila["ID"]))
                     if ok:
                         st.session_state.lista_local = cargar_datos()
@@ -124,13 +130,17 @@ def render_programacion():
                 )
 
             st.write("")
-            for _, fila in agendados.iterrows():
+            for idx, fila in agendados.iterrows():
                 col_info, col_borrar = st.columns([5, 1])
                 col_info.markdown(
                     f"**{fila['Nombre']}** · {fila['Entidad']} · "
                     f"`{fila['mCI']} mCi` · 📅 {fila.get('Fecha_Capsula', '')}"
                 )
-                if col_borrar.button("🗑️", key=f"delag_{fila['ID']}", help="Eliminar paciente"):
+                if col_borrar.button(
+                    "🗑️",
+                    key=f"del_a_{idx}_{fila['ID']}",
+                    help="Eliminar paciente"
+                ):
                     ok = borrar_paciente(str(fila["ID"]))
                     if ok:
                         st.session_state.lista_local = cargar_datos()
@@ -161,7 +171,7 @@ def render_inventario():
             "RECIBIDO": "🔵",
             "ADMINISTRADA": "✅",
             "CANCELADO": "🔴",
-            "DECAIMIENTO": "☢️"
+            "DECAIMIENTO": "☢️",
         }.get(estado_actual, "⚪")
 
         with st.expander(f"{emoji} {p['Nombre']} | {p['ID']} | {estado_actual}"):
