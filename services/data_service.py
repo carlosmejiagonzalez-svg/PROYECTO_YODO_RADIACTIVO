@@ -85,3 +85,10 @@ def reset_completo():
     except requests.RequestException as e:
         st.error(f"❌ Error en reset: {e}")
         return False
+
+def agendar_paciente(id_paciente: str) -> bool:
+    return _get(
+        params={"action": "agendar", "id": id_paciente},
+        mensaje_exito="📅 Paciente agendado para esta semana.",
+        mensaje_error="No se pudo agendar el paciente",
+    )
