@@ -5,6 +5,7 @@ from config import ESTADOS_VALIDOS
 from services.data_service import (
     actualizar_paciente, borrar_paciente, cargar_datos,
     reasignar_dosis, registrar_paciente, reset_completo,
+    agendar_paciente,
 )
 from services.pdf_service import generar_pdf_pedido, generar_pdf_trazabilidad
 from services.physics_service import calcular_actividad, horas_para_actividad_objetivo, porcentaje_remanente
@@ -62,26 +63,78 @@ def render_programacion():
             return
 
         df = pd.DataFrame(lista)
-        activos = df[~df["Estado"].isin(["CANCELADO", "DECAIMIENTO"])].copy()
-        total_mci = pd.to_numeric(activos["mCI"], errors="coerce").sum()
 
-        col_met, col_pdf = st.columns([1, 2])
-        col_met.metric("Total mCi Pedido", f"{total_mci:.1f} mCi")
-        with col_pdf:
-            pdf_bytes = generar_pdf_pedido(lista)
-            st.download_button("📄 Descargar Pedido PDF", data=pdf_bytes, file_name="pedido.pdf", mime="application/pdf", use_container_width=True)
+        # ── Asegurar que exista la columna Agendado ──
+        if "Agendado" not in df.columns:
+            df["Agendado"] = "NO"
+
+        # ── Separar en dos grupos ──
+        pendientes = df[df["Agendado"] != "SI"].copy()
+        agendados = df[
+            (df["Agendado"] == "SI") &
+            (~df["Estado"].isin(["CANCELADO", "DECAIMIENTO"]))
+        ].copy()
+
+        # ═══════════════════════════════════════════
+        # SECCIÓN 1 — Pendientes por agendar
+        # ═══════════════════════════════════════════
+        st.subheader(f"🕐 Pendientes por agendar ({len(pendientes)})")
+
+        if pendientes.empty:
+            st.info("No hay pacientes pendientes por agendar.")
+        else:
+            for _, fila in pendientes.iterrows():
+                col_info, col_agendar, col_borrar = st.columns([4, 2, 1])
+                col_info.markdown(
+                    f"**{fila['Nombre']}** · {fila['Entidad']} · "
+                    f"`{fila['mCI']} mCi` · 📅 {fila.get('Fecha_Capsula', '')}"
+                )
+                if col_agendar.button("📅 Agendar", key=f"ag_{fila['ID']}", use_container_width=True):
+                    ok = agendar_paciente(str(fila["ID"]))
+                    if ok:
+                        st.session_state.lista_local = cargar_datos()
+                        st.rerun()
+                if col_borrar.button("🗑️", key=f"del_{fila['ID']}", help="Eliminar paciente"):
+                    ok = borrar_paciente(str(fila["ID"]))
+                    if ok:
+                        st.session_state.lista_local = cargar_datos()
+                        st.rerun()
 
         st.divider()
-        st.subheader(f"Pacientes activos ({len(activos)})")
 
-        for _, fila in activos.iterrows():
-            col_info, col_btn = st.columns([4, 1])
-            col_info.markdown(f"**{fila['Nombre']}** · {fila['Entidad']} · `{fila['mCI']} mCi` · {fila.get('Fecha_Capsula', '')}")
-            if col_btn.button("🗑️", key=f"del_{fila['ID']}", help="Eliminar paciente"):
-                ok = borrar_paciente(str(fila["ID"]))
-                if ok:
-                    st.session_state.lista_local = cargar_datos()
-                    st.rerun()
+        # ═══════════════════════════════════════════
+        # SECCIÓN 2 — Pedido de esta semana
+        # ═══════════════════════════════════════════
+        st.subheader(f"📋 Pedido de esta semana ({len(agendados)})")
+
+        if agendados.empty:
+            st.info("No hay pacientes agendados para esta semana.")
+        else:
+            total_mci = pd.to_numeric(agendados["mCI"], errors="coerce").sum()
+            col_met, col_pdf = st.columns([1, 2])
+            col_met.metric("Total mCi Pedido", f"{total_mci:.1f} mCi")
+            with col_pdf:
+                pdf_bytes = generar_pdf_pedido(lista)
+                st.download_button(
+                    "📄 Descargar Pedido PDF",
+                    data=pdf_bytes,
+                    file_name="pedido.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+
+            st.write("")
+            for _, fila in agendados.iterrows():
+                col_info, col_borrar = st.columns([5, 1])
+                col_info.markdown(
+                    f"**{fila['Nombre']}** · {fila['Entidad']} · "
+                    f"`{fila['mCI']} mCi` · 📅 {fila.get('Fecha_Capsula', '')}"
+                )
+                if col_borrar.button("🗑️", key=f"delag_{fila['ID']}", help="Eliminar paciente"):
+                    ok = borrar_paciente(str(fila["ID"]))
+                    if ok:
+                        st.session_state.lista_local = cargar_datos()
+                        st.rerun()
 
 
 def render_inventario():
@@ -91,26 +144,43 @@ def render_inventario():
         return
 
     pdf_bytes = generar_pdf_trazabilidad(lista)
-    st.download_button("📑 Reporte de Trazabilidad Completo (PDF)", data=pdf_bytes, file_name="trazabilidad.pdf", mime="application/pdf")
+    st.download_button(
+        "📑 Reporte de Trazabilidad Completo (PDF)",
+        data=pdf_bytes,
+        file_name="trazabilidad.pdf",
+        mime="application/pdf",
+    )
 
     st.divider()
 
     for idx, p in enumerate(lista):
-        estado_actual = p.get("Estado", "PENDIENTE")
-        emoji = {"PENDIENTE": "🟡", "RECIBIDO": "🔵", "ADMINISTRADA": "✅", "CANCELADO": "🔴", "DECAIMIENTO": "☢️"}.get(estado_actual, "⚪")
+        estado_actual = p.get("Estado", "PENDIENTE AGENDAR")
+        emoji = {
+            "PENDIENTE AGENDAR": "🕐",
+            "PENDIENTE": "🟡",
+            "RECIBIDO": "🔵",
+            "ADMINISTRADA": "✅",
+            "CANCELADO": "🔴",
+            "DECAIMIENTO": "☢️"
+        }.get(estado_actual, "⚪")
 
         with st.expander(f"{emoji} {p['Nombre']} | {p['ID']} | {estado_actual}"):
             col_a, col_b = st.columns(2)
 
             with col_a:
                 st.markdown("**Actualizar estado**")
-                nuevo_estado = st.selectbox("Estado", ESTADOS_VALIDOS,
-                    index=ESTADOS_VALIDOS.index(estado_actual) if estado_actual in ESTADOS_VALIDOS else 0,
-                    key=f"s_{idx}")
+                estados_opciones = ["PENDIENTE AGENDAR"] + ESTADOS_VALIDOS
+                nuevo_estado = st.selectbox(
+                    "Estado", estados_opciones,
+                    index=estados_opciones.index(estado_actual) if estado_actual in estados_opciones else 0,
+                    key=f"s_{idx}",
+                )
 
                 fecha_admin_str = ""
                 if nuevo_estado == "ADMINISTRADA":
-                    fecha_admin_str = st.date_input("Fecha Administración", key=f"fa_{idx}").strftime("%d/%m/%Y")
+                    fecha_admin_str = st.date_input(
+                        "Fecha Administración", key=f"fa_{idx}"
+                    ).strftime("%d/%m/%Y")
 
                 notas_valor = str(p.get("Notas", ""))
                 notas_valor = "" if notas_valor.lower() == "nan" else notas_valor
@@ -135,7 +205,10 @@ def render_inventario():
                             st.warning("Completa nombre e ID del nuevo paciente.")
                         else:
                             historial = f"Dosis cedida por {p['Nombre']}. Motivo: {obs}"
-                            ok = reasignar_dosis(str(p["ID"]), rn, ri, re, rd, str(p.get("Fecha_Capsula", "")), historial)
+                            ok = reasignar_dosis(
+                                str(p["ID"]), rn, ri, re, rd,
+                                str(p.get("Fecha_Capsula", "")), historial
+                            )
                             if ok:
                                 st.session_state.lista_local = cargar_datos()
                                 st.rerun()
@@ -145,6 +218,8 @@ def render_inventario():
                     st.write(f"📅 Fecha Recepción: `{p.get('Fecha_Recepcion', '—')}`")
                     st.write(f"📅 Fecha Admin.: `{p.get('Fecha_Administracion', '—')}`")
                     st.write(f"💊 Dosis: `{p.get('mCI', '—')} mCi`")
+                    agendado = str(p.get("Agendado", "NO"))
+                    st.write(f"📋 Agendado: `{'Sí' if agendado == 'SI' else 'No'}`")
 
 
 def render_calculadora():
