@@ -5,7 +5,7 @@ from config import ESTADOS_VALIDOS
 from services.data_service import (
     actualizar_paciente, borrar_paciente, cargar_datos,
     reasignar_dosis, registrar_paciente, reset_completo,
-    agendar_paciente,
+    agendar_paciente, cerrar_trazabilidad,
 )
 from services.pdf_service import generar_pdf_pedido, generar_pdf_trazabilidad
 from services.physics_service import calcular_actividad, horas_para_actividad_objetivo, porcentaje_remanente
@@ -139,11 +139,10 @@ def render_programacion():
                     use_container_width=True,
                 )
 
-            # ── Barra de progreso con alerta ──
             st.progress(int(porcentaje))
 
             if total_mci >= LIMITE_MCI:
-                st.error(f"🚨 **LÍMITE ALCANZADO** — El pedido ha llegado a {total_mci:.1f} mCi. No se pueden agendar más pacientes para esta semana.")
+                st.error(f"🚨 **LÍMITE ALCANZADO** — El pedido ha llegado a {total_mci:.1f} mCi. No se pueden agendar más pacientes.")
             elif total_mci >= LIMITE_MCI * 0.85:
                 st.warning(f"⚠️ **ATENCIÓN** — Llevas {total_mci:.1f} mCi de {LIMITE_MCI:.0f} mCi permitidos. Solo quedan {restante:.1f} mCi disponibles.")
             else:
@@ -173,24 +172,34 @@ def render_inventario():
         st.info("No hay datos para mostrar.")
         return
 
-    # Solo mostrar pacientes que ya fueron agendados
-    lista_agendados = [p for p in lista if str(p.get("Agendado", "NO")) == "SI"]
+    # Solo pacientes agendados y cuyo reporte no ha sido generado aún
+    lista_trazabilidad = [
+        p for p in lista
+        if str(p.get("Agendado", "NO")) == "SI"
+        and str(p.get("Reporte_Generado", "NO")) != "SI"
+    ]
 
-    if not lista_agendados:
-        st.info("No hay pacientes agendados aún. Agenda pacientes desde la pestaña de Programación.")
+    if not lista_trazabilidad:
+        st.info("No hay pacientes pendientes de reporte. Todos los reportes han sido generados.")
         return
 
-    pdf_bytes = generar_pdf_trazabilidad(lista_agendados)
-    st.download_button(
-        "📑 Reporte de Trazabilidad Completo (PDF)",
-        data=pdf_bytes,
-        file_name="trazabilidad.pdf",
-        mime="application/pdf",
-    )
+    st.subheader(f"📦 Pacientes en trazabilidad ({len(lista_trazabilidad)})")
+    st.caption("Selecciona los pacientes para incluir en el reporte y haz clic en 'Generar Reporte Seleccionados'.")
 
     st.divider()
 
-    for idx, p in enumerate(lista_agendados):
+    # ── Checkboxes de selección ──
+    if "seleccionados_trazabilidad" not in st.session_state:
+        st.session_state.seleccionados_trazabilidad = []
+
+    col_sel_all, _ = st.columns([2, 5])
+    if col_sel_all.button("☑️ Seleccionar todos", use_container_width=True):
+        st.session_state.seleccionados_trazabilidad = [str(p["ID"]) for p in lista_trazabilidad]
+        st.rerun()
+
+    seleccionados = []
+
+    for idx, p in enumerate(lista_trazabilidad):
         estado_actual = p.get("Estado", "PENDIENTE")
         emoji = {
             "PENDIENTE AGENDAR": "🕐",
@@ -201,7 +210,21 @@ def render_inventario():
             "DECAIMIENTO": "☢️",
         }.get(estado_actual, "⚪")
 
-        with st.expander(f"{emoji} {p['Nombre']} | {p['ID']} | {estado_actual}"):
+        col_check, col_nombre = st.columns([1, 6])
+        checked = col_check.checkbox(
+            "",
+            value=str(p["ID"]) in st.session_state.seleccionados_trazabilidad,
+            key=f"chk_{idx}_{p['ID']}",
+        )
+        if checked:
+            seleccionados.append(str(p["ID"]))
+
+        col_nombre.markdown(
+            f"{emoji} **{p['Nombre']}** · {p['ID']} · "
+            f"{p.get('Entidad', '')} · `{p.get('mCI', '')} mCi` · {estado_actual}"
+        )
+
+        with st.expander(f"Ver detalles — {p['Nombre']}", expanded=False):
             col_a, col_b = st.columns(2)
 
             with col_a:
@@ -254,6 +277,37 @@ def render_inventario():
                     st.write(f"📅 Fecha Recepción: `{p.get('Fecha_Recepcion', '—')}`")
                     st.write(f"📅 Fecha Admin.: `{p.get('Fecha_Administracion', '—')}`")
                     st.write(f"💊 Dosis: `{p.get('mCI', '—')} mCi`")
+
+    st.divider()
+
+    # ── Botón generar reporte seleccionados ──
+    if seleccionados:
+        lista_para_pdf = [p for p in lista_trazabilidad if str(p["ID"]) in seleccionados]
+        st.info(f"📋 {len(seleccionados)} paciente(s) seleccionado(s) para el reporte.")
+
+        col_pdf, col_cerrar = st.columns(2)
+
+        pdf_bytes = generar_pdf_trazabilidad(lista_para_pdf)
+        col_pdf.download_button(
+            "📑 Descargar Reporte Seleccionados",
+            data=pdf_bytes,
+            file_name="trazabilidad_seleccionados.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+        )
+
+        if col_cerrar.button(
+            "✅ Confirmar y cerrar seleccionados",
+            use_container_width=True,
+            type="primary",
+        ):
+            ok = cerrar_trazabilidad(seleccionados)
+            if ok:
+                st.session_state.seleccionados_trazabilidad = []
+                st.session_state.lista_local = cargar_datos()
+                st.rerun()
+    else:
+        st.warning("⚠️ Selecciona al menos un paciente para generar el reporte.")
 
 
 def render_calculadora():
