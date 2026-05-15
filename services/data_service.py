@@ -92,3 +92,15 @@ def agendar_paciente(id_paciente: str) -> bool:
         mensaje_exito="📅 Paciente agendado para esta semana.",
         mensaje_error="No se pudo agendar el paciente",
     )
+
+def cerrar_trazabilidad(ids: list[str]) -> bool:
+    """
+    Marca una lista de pacientes como Reporte_Generado = SI.
+    Recibe una lista de IDs y los envía separados por coma.
+    """
+    ids_str = ",".join(ids)
+    return _get(
+        params={"action": "cerrar_trazabilidad", "ids": ids_str},
+        mensaje_exito="📋 Reporte generado y pacientes cerrados correctamente.",
+        mensaje_error="No se pudo cerrar la trazabilidad",
+    )
