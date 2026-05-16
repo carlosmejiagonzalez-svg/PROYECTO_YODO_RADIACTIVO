@@ -40,16 +40,16 @@ def render_programacion():
             st.session_state.confirmar_reset = False
 
         if not st.session_state.confirmar_reset:
-            if st.button("🚨 LIMPIAR / RESET", use_container_width=True, type="secondary"):
+            if st.button("🚨 LIMPIAR AGENDADOS", use_container_width=True, type="secondary"):
                 st.session_state.confirmar_reset = True
                 st.rerun()
         else:
-            st.error("¿Confirmas que quieres borrar **todos** los registros? Esta acción no se puede deshacer.")
+            st.error("¿Confirmas? Se quitará el agendamiento de todos los pacientes. Los registros de trazabilidad **no se verán afectados**.")
             col_si, col_no = st.columns(2)
-            if col_si.button("✅ Sí, borrar todo", use_container_width=True, type="primary"):
+            if col_si.button("✅ Sí, limpiar agendados", use_container_width=True, type="primary"):
                 ok = reset_completo()
                 if ok:
-                    st.session_state.lista_local = []
+                    st.session_state.lista_local = cargar_datos()
                 st.session_state.confirmar_reset = False
                 st.rerun()
             if col_no.button("❌ Cancelar", use_container_width=True):
@@ -67,7 +67,11 @@ def render_programacion():
         if "Agendado" not in df.columns:
             df["Agendado"] = "NO"
 
-        pendientes = df[df["Agendado"] != "SI"].copy().reset_index(drop=True)
+        pendientes = df[
+            (df["Agendado"] != "SI") &
+            (~df["Estado"].isin(["CANCELADO", "DECAIMIENTO"]))
+        ].copy().reset_index(drop=True)
+
         agendados = df[
             (df["Agendado"] == "SI") &
             (~df["Estado"].isin(["CANCELADO", "DECAIMIENTO"]))
@@ -142,9 +146,9 @@ def render_programacion():
             st.progress(int(porcentaje))
 
             if total_mci >= LIMITE_MCI:
-                st.error(f"🚨 **LÍMITE ALCANZADO** — El pedido ha llegado a {total_mci:.1f} mCi. No se pueden agendar más pacientes.")
+                st.error(f"🚨 **LÍMITE ALCANZADO** — El pedido ha llegado a {total_mci:.1f} mCi.")
             elif total_mci >= LIMITE_MCI * 0.85:
-                st.warning(f"⚠️ **ATENCIÓN** — Llevas {total_mci:.1f} mCi de {LIMITE_MCI:.0f} mCi permitidos. Solo quedan {restante:.1f} mCi disponibles.")
+                st.warning(f"⚠️ **ATENCIÓN** — Llevas {total_mci:.1f} mCi de {LIMITE_MCI:.0f} mCi. Solo quedan {restante:.1f} mCi disponibles.")
             else:
                 st.success(f"✅ Capacidad disponible: {restante:.1f} mCi restantes de {LIMITE_MCI:.0f} mCi permitidos.")
 
@@ -179,28 +183,32 @@ def render_inventario():
     ]
 
     if not lista_trazabilidad:
-        st.info("No hay pacientes pendientes de reporte. Todos los reportes han sido generados.")
+        st.info("No hay pacientes pendientes de reporte.")
         return
 
     st.subheader(f"📦 Pacientes en trazabilidad ({len(lista_trazabilidad)})")
-    st.caption("Selecciona los pacientes para incluir en el reporte marcando el checkbox a la derecha.")
-
+    st.caption("Marca el checkbox a la derecha para seleccionar pacientes e incluirlos en el reporte.")
     st.divider()
 
+    # ── Inicializar selección en session_state ──
     if "seleccionados_trazabilidad" not in st.session_state:
-        st.session_state.seleccionados_trazabilidad = []
+        st.session_state.seleccionados_trazabilidad = set()
 
-    col_sel_all, _ = st.columns([2, 5])
-    if col_sel_all.button("☑️ Seleccionar todos", use_container_width=True):
-        st.session_state.seleccionados_trazabilidad = [str(p["ID"]) for p in lista_trazabilidad]
-        st.rerun()
+    todos_ids = {str(p["ID"]) for p in lista_trazabilidad}
 
-    seleccionados = []
+    # ── Botones seleccionar/deseleccionar todos ──
+    col_sel, col_desel, _ = st.columns([2, 2, 4])
+    if col_sel.button("☑️ Seleccionar todos", use_container_width=True):
+        st.session_state.seleccionados_trazabilidad = todos_ids.copy()
+    if col_desel.button("🔲 Deseleccionar todos", use_container_width=True):
+        st.session_state.seleccionados_trazabilidad = set()
 
+    st.write("")
+
+    # ── Lista de pacientes con checkbox ──
     for idx, p in enumerate(lista_trazabilidad):
         estado_actual = p.get("Estado", "PENDIENTE")
         emoji = {
-            "PENDIENTE AGENDAR": "🕐",
             "PENDIENTE": "🟡",
             "RECIBIDO": "🔵",
             "ADMINISTRADA": "✅",
@@ -208,21 +216,24 @@ def render_inventario():
             "DECAIMIENTO": "☢️",
         }.get(estado_actual, "⚪")
 
-        # ── Fila principal — una sola línea con checkbox a la derecha ──
         col_nombre, col_estado, col_check = st.columns([5, 2, 1])
         col_nombre.markdown(
-            f"{emoji} **{p['Nombre']}** · {p.get('ID','')} · {p.get('Entidad','')} · `{p.get('mCI','')} mCi`"
+            f"{emoji} **{p['Nombre']}** · {p.get('ID','')} · "
+            f"{p.get('Entidad','')} · `{p.get('mCI','')} mCi`"
         )
         col_estado.markdown(f"`{estado_actual}`")
+
+        # Checkbox controlado por session_state
         checked = col_check.checkbox(
             "",
             value=str(p["ID"]) in st.session_state.seleccionados_trazabilidad,
             key=f"chk_{idx}_{p['ID']}",
         )
         if checked:
-            seleccionados.append(str(p["ID"]))
+            st.session_state.seleccionados_trazabilidad.add(str(p["ID"]))
+        else:
+            st.session_state.seleccionados_trazabilidad.discard(str(p["ID"]))
 
-        # ── Detalles expandibles ──
         with st.expander(f"Ver detalles — {p['Nombre']}", expanded=False):
             col_a, col_b = st.columns(2)
 
@@ -278,6 +289,8 @@ def render_inventario():
 
     st.divider()
 
+    seleccionados = list(st.session_state.seleccionados_trazabilidad & todos_ids)
+
     if seleccionados:
         lista_para_pdf = [p for p in lista_trazabilidad if str(p["ID"]) in seleccionados]
         st.info(f"📋 {len(seleccionados)} paciente(s) seleccionado(s) para el reporte.")
@@ -298,7 +311,7 @@ def render_inventario():
         ):
             ok = cerrar_trazabilidad(seleccionados)
             if ok:
-                st.session_state.seleccionados_trazabilidad = []
+                st.session_state.seleccionados_trazabilidad = set()
                 st.session_state.lista_local = cargar_datos()
                 st.rerun()
     else:
