@@ -172,7 +172,6 @@ def render_inventario():
         st.info("No hay datos para mostrar.")
         return
 
-    # Solo pacientes agendados y cuyo reporte no ha sido generado aún
     lista_trazabilidad = [
         p for p in lista
         if str(p.get("Agendado", "NO")) == "SI"
@@ -184,11 +183,10 @@ def render_inventario():
         return
 
     st.subheader(f"📦 Pacientes en trazabilidad ({len(lista_trazabilidad)})")
-    st.caption("Selecciona los pacientes para incluir en el reporte y haz clic en 'Generar Reporte Seleccionados'.")
+    st.caption("Selecciona los pacientes para incluir en el reporte marcando el checkbox a la derecha.")
 
     st.divider()
 
-    # ── Checkboxes de selección ──
     if "seleccionados_trazabilidad" not in st.session_state:
         st.session_state.seleccionados_trazabilidad = []
 
@@ -210,7 +208,12 @@ def render_inventario():
             "DECAIMIENTO": "☢️",
         }.get(estado_actual, "⚪")
 
-        col_check, col_nombre = st.columns([1, 6])
+        # ── Fila principal — una sola línea con checkbox a la derecha ──
+        col_nombre, col_estado, col_check = st.columns([5, 2, 1])
+        col_nombre.markdown(
+            f"{emoji} **{p['Nombre']}** · {p.get('ID','')} · {p.get('Entidad','')} · `{p.get('mCI','')} mCi`"
+        )
+        col_estado.markdown(f"`{estado_actual}`")
         checked = col_check.checkbox(
             "",
             value=str(p["ID"]) in st.session_state.seleccionados_trazabilidad,
@@ -219,11 +222,7 @@ def render_inventario():
         if checked:
             seleccionados.append(str(p["ID"]))
 
-        col_nombre.markdown(
-            f"{emoji} **{p['Nombre']}** · {p['ID']} · "
-            f"{p.get('Entidad', '')} · `{p.get('mCI', '')} mCi` · {estado_actual}"
-        )
-
+        # ── Detalles expandibles ──
         with st.expander(f"Ver detalles — {p['Nombre']}", expanded=False):
             col_a, col_b = st.columns(2)
 
@@ -234,7 +233,6 @@ def render_inventario():
                     index=ESTADOS_VALIDOS.index(estado_actual) if estado_actual in ESTADOS_VALIDOS else 0,
                     key=f"s_{idx}",
                 )
-
                 fecha_admin_str = ""
                 if nuevo_estado == "ADMINISTRADA":
                     fecha_admin_str = st.date_input(
@@ -280,13 +278,11 @@ def render_inventario():
 
     st.divider()
 
-    # ── Botón generar reporte seleccionados ──
     if seleccionados:
         lista_para_pdf = [p for p in lista_trazabilidad if str(p["ID"]) in seleccionados]
         st.info(f"📋 {len(seleccionados)} paciente(s) seleccionado(s) para el reporte.")
 
         col_pdf, col_cerrar = st.columns(2)
-
         pdf_bytes = generar_pdf_trazabilidad(lista_para_pdf)
         col_pdf.download_button(
             "📑 Descargar Reporte Seleccionados",
@@ -295,7 +291,6 @@ def render_inventario():
             mime="application/pdf",
             use_container_width=True,
         )
-
         if col_cerrar.button(
             "✅ Confirmar y cerrar seleccionados",
             use_container_width=True,
