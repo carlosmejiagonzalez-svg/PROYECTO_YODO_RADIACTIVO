@@ -190,13 +190,11 @@ def render_inventario():
     st.caption("Marca el checkbox a la derecha para seleccionar pacientes e incluirlos en el reporte.")
     st.divider()
 
-    # ── Inicializar selección en session_state ──
     if "seleccionados_trazabilidad" not in st.session_state:
         st.session_state.seleccionados_trazabilidad = set()
 
     todos_ids = {str(p["ID"]) for p in lista_trazabilidad}
 
-    # ── Botones seleccionar/deseleccionar todos ──
     col_sel, col_desel, _ = st.columns([2, 2, 4])
     if col_sel.button("☑️ Seleccionar todos", use_container_width=True):
         st.session_state.seleccionados_trazabilidad = todos_ids.copy()
@@ -205,7 +203,6 @@ def render_inventario():
 
     st.write("")
 
-    # ── Lista de pacientes con checkbox ──
     for idx, p in enumerate(lista_trazabilidad):
         estado_actual = p.get("Estado", "PENDIENTE")
         emoji = {
@@ -222,8 +219,6 @@ def render_inventario():
             f"{p.get('Entidad','')} · `{p.get('mCI','')} mCi`"
         )
         col_estado.markdown(f"`{estado_actual}`")
-
-        # Checkbox controlado por session_state
         checked = col_check.checkbox(
             "",
             value=str(p["ID"]) in st.session_state.seleccionados_trazabilidad,
@@ -244,7 +239,15 @@ def render_inventario():
                     index=ESTADOS_VALIDOS.index(estado_actual) if estado_actual in ESTADOS_VALIDOS else 0,
                     key=f"s_{idx}",
                 )
+
                 fecha_admin_str = ""
+                fecha_recep_str = ""
+
+                if nuevo_estado == "RECIBIDO":
+                    fecha_recep_str = st.date_input(
+                        "Fecha Recepción", key=f"fr_{idx}"
+                    ).strftime("%d/%m/%Y")
+
                 if nuevo_estado == "ADMINISTRADA":
                     fecha_admin_str = st.date_input(
                         "Fecha Administración", key=f"fa_{idx}"
@@ -255,7 +258,10 @@ def render_inventario():
                 obs = st.text_area("Notas / Motivo", value=notas_valor, key=f"o_{idx}")
 
                 if st.button("💾 Guardar Cambios", key=f"g_{idx}"):
-                    ok = actualizar_paciente(str(p["ID"]), nuevo_estado, obs, fecha_admin_str)
+                    ok = actualizar_paciente(
+                        str(p["ID"]), nuevo_estado, obs,
+                        fecha_admin_str, fecha_recep_str
+                    )
                     if ok:
                         st.session_state.lista_local = cargar_datos()
                         st.rerun()
