@@ -60,9 +60,16 @@ def borrar_paciente(id_paciente):
         mensaje_error="No se pudo eliminar el paciente",
     )
 
-def actualizar_paciente(old_id, estado, notas, fecha_administracion=""):
+def actualizar_paciente(old_id, estado, notas, fecha_administracion="", fecha_recepcion=""):
     return _get(
-        params={"action":"update","old_id":old_id,"estado":estado,"notas":notas,"fecha_administracion":fecha_administracion},
+        params={
+            "action": "update",
+            "old_id": old_id,
+            "estado": estado,
+            "notas": notas,
+            "fecha_administracion": fecha_administracion,
+            "fecha_recepcion": fecha_recepcion,
+        },
         mensaje_exito="💾 Cambios guardados.",
         mensaje_error="No se pudo actualizar el registro",
     )
@@ -86,18 +93,14 @@ def reset_completo():
         st.error(f"❌ Error en reset: {e}")
         return False
 
-def agendar_paciente(id_paciente: str) -> bool:
+def agendar_paciente(id_paciente):
     return _get(
         params={"action": "agendar", "id": id_paciente},
         mensaje_exito="📅 Paciente agendado para esta semana.",
         mensaje_error="No se pudo agendar el paciente",
     )
 
-def cerrar_trazabilidad(ids: list[str]) -> bool:
-    """
-    Marca una lista de pacientes como Reporte_Generado = SI.
-    Recibe una lista de IDs y los envía separados por coma.
-    """
+def cerrar_trazabilidad(ids):
     ids_str = ",".join(ids)
     return _get(
         params={"action": "cerrar_trazabilidad", "ids": ids_str},
