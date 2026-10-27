@@ -222,8 +222,12 @@ def render_inventario():
     col_sel, col_desel, _ = st.columns([2, 2, 4])
     if col_sel.button("☑️ Seleccionar todos", use_container_width=True):
         st.session_state.seleccionados_trazabilidad = todos_ids.copy()
+        for codigo in todos_ids:
+            st.session_state[f"trazabilidad_{codigo}"] = True
     if col_desel.button("🔲 Deseleccionar todos", use_container_width=True):
         st.session_state.seleccionados_trazabilidad = set()
+        for codigo in todos_ids:
+            st.session_state[f"trazabilidad_{codigo}"] = False
 
     st.write("")
 
@@ -243,10 +247,13 @@ def render_inventario():
             f"{p.get('Entidad','')} · `{p.get('mCI','')} mCi`"
         )
         col_estado.markdown(f"`{estado_actual}`")
+        clave_seleccion = f"trazabilidad_{p['ID_Tratamiento']}"
+        if clave_seleccion not in st.session_state:
+            st.session_state[clave_seleccion] = str(p["ID_Tratamiento"]) in st.session_state.seleccionados_trazabilidad
         checked = col_check.checkbox(
-            "",
-            value=str(p["ID_Tratamiento"]) in st.session_state.seleccionados_trazabilidad,
-            key=f"chk_{idx}_{p['ID']}",
+            "Seleccionar tratamiento",
+            key=clave_seleccion,
+            label_visibility="collapsed",
         )
         if checked:
             st.session_state.seleccionados_trazabilidad.add(str(p["ID_Tratamiento"]))
@@ -261,7 +268,7 @@ def render_inventario():
                 nuevo_estado = st.selectbox(
                     "Estado", ESTADOS_VALIDOS,
                     index=ESTADOS_VALIDOS.index(estado_actual) if estado_actual in ESTADOS_VALIDOS else 0,
-                    key=f"s_{idx}",
+                    key=f"s_{p['ID_Tratamiento']}",
                 )
 
                 fecha_admin_str = ""
@@ -269,19 +276,19 @@ def render_inventario():
 
                 if nuevo_estado == "RECIBIDO":
                     fecha_recep_str = st.date_input(
-                        "Fecha Recepción", key=f"fr_{idx}"
+                        "Fecha Recepción", key=f"fr_{p['ID_Tratamiento']}"
                     ).strftime("%d/%m/%Y")
 
                 if nuevo_estado == "ADMINISTRADA":
                     fecha_admin_str = st.date_input(
-                        "Fecha Administración", key=f"fa_{idx}"
+                        "Fecha Administración", key=f"fa_{p['ID_Tratamiento']}"
                     ).strftime("%d/%m/%Y")
 
                 notas_valor = str(p.get("Notas", ""))
                 notas_valor = "" if notas_valor.lower() == "nan" else notas_valor
-                obs = st.text_area("Notas / Motivo", value=notas_valor, key=f"o_{idx}")
+                obs = st.text_area("Notas / Motivo", value=notas_valor, key=f"o_{p['ID_Tratamiento']}")
 
-                if st.button("💾 Guardar Cambios", key=f"g_{idx}"):
+                if st.button("💾 Guardar Cambios", key=f"g_{p['ID_Tratamiento']}"):
                     ok = actualizar_paciente(
                         str(p["ID_Tratamiento"]), nuevo_estado, obs,
                         fecha_admin_str, fecha_recep_str
@@ -293,12 +300,12 @@ def render_inventario():
             with col_b:
                 if estado_actual == "CANCELADO":
                     st.info("🔄 Reasignación de Dosis")
-                    rn = st.text_input("Nombre nuevo paciente", key=f"rn_{idx}").strip().upper()
-                    ri = st.text_input("ID nuevo paciente", key=f"ri_{idx}").strip()
-                    re = st.text_input("Entidad", value=p.get("Entidad", ""), key=f"re_{idx}").strip().upper()
-                    rd = st.number_input("mCi a reasignar", value=float(p.get("mCI", 0)), key=f"rd_{idx}")
+                    rn = st.text_input("Nombre nuevo paciente", key=f"rn_{p['ID_Tratamiento']}").strip().upper()
+                    ri = st.text_input("ID nuevo paciente", key=f"ri_{p['ID_Tratamiento']}").strip()
+                    re = st.text_input("Entidad", value=p.get("Entidad", ""), key=f"re_{p['ID_Tratamiento']}").strip().upper()
+                    rd = st.number_input("mCi a reasignar", min_value=0.0, value=float(p.get("mCI", 0)), key=f"rd_{p['ID_Tratamiento']}")
 
-                    if st.button("✅ Confirmar Traspaso", key=f"tr_{idx}"):
+                    if st.button("✅ Confirmar Traspaso", key=f"tr_{p['ID_Tratamiento']}"):
                         if not rn or not ri:
                             st.warning("Completa nombre e ID del nuevo paciente.")
                         else:
