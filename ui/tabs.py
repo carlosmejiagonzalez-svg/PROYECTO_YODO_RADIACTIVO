@@ -27,6 +27,8 @@ def render_programacion():
         if submitted:
             if not nombre or not cedula or not entidad or dosis <= 0:
                 st.warning("⚠️ Completa todos los campos y asegúrate que la dosis sea mayor a 0.")
+            elif any(str(p.get("ID", "")).strip() == cedula for p in st.session_state.lista_local):
+                st.error("Ya existe un registro con esta identificación. Por seguridad no se puede registrar otro tratamiento hasta que el sistema distinga cada tratamiento de forma individual.")
             else:
                 ok = registrar_paciente(nombre, cedula, entidad, dosis, fecha)
                 if ok:
@@ -64,6 +66,10 @@ def render_programacion():
 
         df = pd.DataFrame(lista)
 
+        ids_duplicados = set(df.loc[df["ID"].astype(str).str.strip().duplicated(keep=False), "ID"].astype(str).str.strip())
+        if ids_duplicados:
+            st.error("Hay identificaciones repetidas. Las acciones sobre esos registros están deshabilitadas hasta que cada tratamiento tenga un identificador propio.")
+
         if "Agendado" not in df.columns:
             df["Agendado"] = "NO"
 
@@ -91,6 +97,9 @@ def render_programacion():
                     f"**{fila['Nombre']}** · {fila['Entidad']} · "
                     f"`{fila['mCI']} mCi` · 📅 {fila.get('Fecha_Capsula', '')}"
                 )
+                if str(fila["ID"]).strip() in ids_duplicados:
+                    col_agendar.warning("Registro duplicado")
+                    continue
                 if col_agendar.button(
                     "📅 Agendar",
                     key=f"ag_{idx}_{fila['ID']}",
@@ -146,6 +155,7 @@ def render_programacion():
                     file_name="pedido.pdf",
                     mime="application/pdf",
                     use_container_width=True,
+                    disabled=any(str(x).strip() in ids_duplicados for x in agendados["ID"]),
                 )
 
             st.progress(int(porcentaje))
@@ -164,6 +174,8 @@ def render_programacion():
                     f"**{fila['Nombre']}** · {fila['Entidad']} · "
                     f"`{fila['mCI']} mCi` · 📅 {fila.get('Fecha_Capsula', '')}"
                 )
+                if str(fila["ID"]).strip() in ids_duplicados:
+                    continue
                 if col_borrar.button(
                     "🗑️",
                     key=f"del_a_{idx}_{fila['ID']}",
@@ -181,10 +193,16 @@ def render_inventario():
         st.info("No hay datos para mostrar.")
         return
 
+    ids = [str(p.get("ID", "")).strip() for p in lista]
+    ids_duplicados = {id_paciente for id_paciente in ids if ids.count(id_paciente) > 1}
+    if ids_duplicados:
+        st.error("Hay identificaciones repetidas. La trazabilidad de esos registros está deshabilitada hasta asignar un identificador a cada tratamiento.")
+
     lista_trazabilidad = [
         p for p in lista
         if str(p.get("Agendado", "NO")) == "SI"
         and str(p.get("Reporte_Generado", "NO")) != "SI"
+        and str(p.get("ID", "")).strip() not in ids_duplicados
     ]
 
     if not lista_trazabilidad:
@@ -282,6 +300,8 @@ def render_inventario():
                     if st.button("✅ Confirmar Traspaso", key=f"tr_{idx}"):
                         if not rn or not ri:
                             st.warning("Completa nombre e ID del nuevo paciente.")
+                        elif ri in ids:
+                            st.error("La identificación ya tiene un registro. No es posible reasignar hasta que cada tratamiento tenga un identificador propio.")
                         else:
                             historial = f"Dosis cedida por {p['Nombre']}. Motivo: {obs}"
                             ok = reasignar_dosis(
