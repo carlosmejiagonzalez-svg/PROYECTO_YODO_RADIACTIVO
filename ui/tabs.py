@@ -115,12 +115,17 @@ def render_programacion():
         # ═══════════════════════════════════════════
         # SECCIÓN 2 — Pedido de esta semana
         # ═══════════════════════════════════════════
-        st.subheader(f"📋 Pedido de esta semana ({len(agendados)})")
+        st.subheader(f"📋 Pacientes agendados ({len(agendados)})")
+        st.caption("La lista muestra todos los registros marcados como agendados; no se filtra automáticamente por semana.")
 
         if agendados.empty:
-            st.info("No hay pacientes agendados para esta semana.")
+            st.info("No hay pacientes agendados.")
         else:
-            LIMITE_MCI = 150.0
+            LIMITE_MCI = st.number_input(
+                "Capacidad de referencia del pedido (mCi)",
+                min_value=0.1, value=150.0, step=10.0,
+                help="Valor de referencia editable. Verifique el límite aplicable en la autorización y el procedimiento de la instalación.",
+            )
             total_mci = pd.to_numeric(agendados["mCI"], errors="coerce").sum()
             restante = LIMITE_MCI - total_mci
             porcentaje = min((total_mci / LIMITE_MCI) * 100, 100)
@@ -134,7 +139,7 @@ def render_programacion():
                     delta_color="normal" if restante > 0 else "inverse",
                 )
             with col_pdf:
-                pdf_bytes = generar_pdf_pedido(lista)
+                pdf_bytes = generar_pdf_pedido(agendados.to_dict("records"))
                 st.download_button(
                     "📄 Descargar Pedido PDF",
                     data=pdf_bytes,
@@ -146,11 +151,11 @@ def render_programacion():
             st.progress(int(porcentaje))
 
             if total_mci >= LIMITE_MCI:
-                st.error(f"🚨 **LÍMITE ALCANZADO** — El pedido ha llegado a {total_mci:.1f} mCi.")
+                st.error(f"🚨 **Referencia alcanzada** — El pedido suma {total_mci:.1f} mCi. Verifique la capacidad autorizada.")
             elif total_mci >= LIMITE_MCI * 0.85:
                 st.warning(f"⚠️ **ATENCIÓN** — Llevas {total_mci:.1f} mCi de {LIMITE_MCI:.0f} mCi. Solo quedan {restante:.1f} mCi disponibles.")
             else:
-                st.success(f"✅ Capacidad disponible: {restante:.1f} mCi restantes de {LIMITE_MCI:.0f} mCi permitidos.")
+                st.success(f"✅ Restan {restante:.1f} mCi respecto a la capacidad de referencia de {LIMITE_MCI:.0f} mCi.")
 
             st.write("")
             for idx, fila in agendados.iterrows():
@@ -366,3 +371,4 @@ def render_calculadora():
 
     except ValueError as e:
         st.error(f"⚠️ {e}")
+
