@@ -52,6 +52,7 @@ def _agregar_logo(elementos):
             pass
 
 def generar_pdf_pedido(lista):
+    """Genera el pedido únicamente con registros marcados como agendados."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=20, leftMargin=20, topMargin=30, bottomMargin=30)
     elementos = []
@@ -62,7 +63,7 @@ def generar_pdf_pedido(lista):
 
     data = [["PACIENTE", "IDENTIFICACIÓN", "ENTIDAD", "FECHA TOMA", "mCi"]]
     for p in lista:
-        if p.get("Estado") not in ("CANCELADO", "DECAIMIENTO"):
+        if str(p.get("Agendado", "NO")).strip().upper() == "SI" and p.get("Estado") not in ("CANCELADO", "DECAIMIENTO"):
             data.append([
                 p.get("Nombre", ""),
                 p.get("ID", ""),
@@ -105,3 +106,4 @@ def generar_pdf_trazabilidad(lista):
     doc.build(elementos)
     buffer.seek(0)
     return buffer
+
