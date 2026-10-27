@@ -35,15 +35,23 @@ def _get(params, mensaje_exito="", mensaje_error="Error en la operación"):
     try:
         resp = requests.get(SCRIPT_URL, params=params, timeout=15)
         resp.raise_for_status()
+        try:
+            resultado = resp.json()
+        except ValueError:
+            st.error(f"❌ {mensaje_error}: respuesta inválida del servicio. Compruebe el estado antes de reintentar.")
+            return False
+        if not isinstance(resultado, dict) or resultado.get("success") is not True:
+            st.error(f"❌ {mensaje_error}: {resultado.get('message', 'Respuesta no confirmada') if isinstance(resultado, dict) else 'Respuesta no confirmada'}")
+            return False
         if mensaje_exito:
             st.success(mensaje_exito)
         return True
     except requests.Timeout:
-        st.error("⏱️ La solicitud tardó demasiado. Intenta de nuevo.")
+        st.error("⏱️ La solicitud tardó demasiado. La operación podría haberse completado; compruebe el estado antes de reintentar.")
     except requests.HTTPError as e:
         st.error(f"❌ {mensaje_error}: Error HTTP {e.response.status_code}")
-    except requests.RequestException as e:
-        st.error(f"❌ {mensaje_error}: {e}")
+    except requests.RequestException:
+        st.error(f"❌ {mensaje_error}: fallo de conexión. Compruebe el estado antes de reintentar.")
     return False
 
 def registrar_paciente(nombre, id_paciente, entidad, mci, fecha):
@@ -88,9 +96,17 @@ def reset_completo():
     try:
         resp = requests.post(SCRIPT_URL, json={"confirmar": "BORRAR_TODO"}, timeout=15)
         resp.raise_for_status()
+        try:
+            resultado = resp.json()
+        except ValueError:
+            st.error("❌ Respuesta inválida del servicio. Compruebe el estado antes de reintentar.")
+            return False
+        if not isinstance(resultado, dict) or resultado.get("success") is not True:
+            st.error(f"❌ No se pudo limpiar el agendamiento: {resultado.get('message', 'Respuesta no confirmada') if isinstance(resultado, dict) else 'Respuesta no confirmada'}")
+            return False
         return True
-    except requests.RequestException as e:
-        st.error(f"❌ Error en reset: {e}")
+    except requests.RequestException:
+        st.error("❌ Error de conexión. Compruebe el estado antes de reintentar.")
         return False
 
 def agendar_paciente(id_paciente):
@@ -107,3 +123,4 @@ def cerrar_trazabilidad(ids):
         mensaje_exito="📋 Reporte generado y pacientes cerrados correctamente.",
         mensaje_error="No se pudo cerrar la trazabilidad",
     )
+
