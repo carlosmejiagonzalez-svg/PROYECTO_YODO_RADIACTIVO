@@ -22,6 +22,7 @@ def cargar_datos():
         for col in COLUMNAS_REQUERIDAS:
             if col not in df.columns:
                 df[col] = ""
+        df["ID_Tratamiento"] = df["ID_Tratamiento"].fillna("").astype(str).str.strip()
         return df.to_dict("records")
     except Exception as e:
         logger.error("Error cargando datos: %s", e)
@@ -63,7 +64,7 @@ def registrar_paciente(nombre, id_paciente, entidad, mci, fecha):
 
 def borrar_paciente(id_paciente):
     return _get(
-        params={"action":"borrar_paciente","id":id_paciente},
+        params={"action":"borrar_paciente","id_tratamiento":id_paciente},
         mensaje_exito="🗑️ Paciente eliminado.",
         mensaje_error="No se pudo eliminar el paciente",
     )
@@ -72,7 +73,7 @@ def actualizar_paciente(old_id, estado, notas, fecha_administracion="", fecha_re
     return _get(
         params={
             "action": "update",
-            "old_id": old_id,
+            "id_tratamiento": old_id,
             "estado": estado,
             "notas": notas,
             "fecha_administracion": fecha_administracion,
@@ -84,7 +85,7 @@ def actualizar_paciente(old_id, estado, notas, fecha_administracion="", fecha_re
 
 def reasignar_dosis(old_id, nombre, id_nuevo, entidad, mci, fecha, notas):
     return _get(
-        params={"action":"reasignar","old_id":old_id,"nombre":nombre,"id":id_nuevo,"entidad":entidad,"mci":mci,"fecha":fecha,"notas":notas},
+        params={"action":"reasignar","id_tratamiento":old_id,"nombre":nombre,"id":id_nuevo,"entidad":entidad,"mci":mci,"fecha":fecha,"notas":notas},
         mensaje_exito="🔄 Dosis reasignada correctamente.",
         mensaje_error="No se pudo completar la reasignación",
     )
@@ -111,7 +112,7 @@ def reset_completo():
 
 def agendar_paciente(id_paciente):
     return _get(
-        params={"action": "agendar", "id": id_paciente},
+        params={"action": "agendar", "id_tratamiento": id_paciente},
         mensaje_exito="📅 Paciente agendado para esta semana.",
         mensaje_error="No se pudo agendar el paciente",
     )
