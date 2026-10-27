@@ -27,8 +27,6 @@ def render_programacion():
         if submitted:
             if not nombre or not cedula or not entidad or dosis <= 0:
                 st.warning("⚠️ Completa todos los campos y asegúrate que la dosis sea mayor a 0.")
-            elif any(str(p.get("ID", "")).strip() == cedula for p in st.session_state.lista_local):
-                st.error("Ya existe un registro con esta identificación. Por seguridad no se puede registrar otro tratamiento hasta que el sistema distinga cada tratamiento de forma individual.")
             else:
                 ok = registrar_paciente(nombre, cedula, entidad, dosis, fecha)
                 if ok:
@@ -66,9 +64,10 @@ def render_programacion():
 
         df = pd.DataFrame(lista)
 
-        ids_duplicados = set(df.loc[df["ID"].astype(str).str.strip().duplicated(keep=False), "ID"].astype(str).str.strip())
-        if ids_duplicados:
-            st.error("Hay identificaciones repetidas. Las acciones sobre esos registros están deshabilitadas hasta que cada tratamiento tenga un identificador propio.")
+        codigos = df["ID_Tratamiento"].fillna("").astype(str).str.strip()
+        registros_invalidos = set(codigos[codigos.duplicated(keep=False)]) | {""}
+        if codigos.isin(registros_invalidos).any():
+            st.error("Hay tratamientos sin código único. Complete la migración antes de operar con estos registros.")
 
         if "Agendado" not in df.columns:
             df["Agendado"] = "NO"
@@ -97,7 +96,7 @@ def render_programacion():
                     f"**{fila['Nombre']}** · {fila['Entidad']} · "
                     f"`{fila['mCI']} mCi` · 📅 {fila.get('Fecha_Capsula', '')}"
                 )
-                if str(fila["ID"]).strip() in ids_duplicados:
+                if str(fila["ID_Tratamiento"]).strip() in registros_invalidos:
                     col_agendar.warning("Registro duplicado")
                     continue
                 if col_agendar.button(
@@ -105,16 +104,17 @@ def render_programacion():
                     key=f"ag_{idx}_{fila['ID']}",
                     use_container_width=True
                 ):
-                    ok = agendar_paciente(str(fila["ID"]))
+                    ok = agendar_paciente(str(fila["ID_Tratamiento"]))
                     if ok:
                         st.session_state.lista_local = cargar_datos()
                         st.rerun()
                 if col_borrar.button(
                     "🗑️",
                     key=f"del_p_{idx}_{fila['ID']}",
-                    help="Eliminar paciente"
+                    help="Eliminación deshabilitada hasta definir la política de conservación de registros.",
+                    disabled=True,
                 ):
-                    ok = borrar_paciente(str(fila["ID"]))
+                    ok = borrar_paciente(str(fila["ID_Tratamiento"]))
                     if ok:
                         st.session_state.lista_local = cargar_datos()
                         st.rerun()
@@ -155,7 +155,7 @@ def render_programacion():
                     file_name="pedido.pdf",
                     mime="application/pdf",
                     use_container_width=True,
-                    disabled=any(str(x).strip() in ids_duplicados for x in agendados["ID"]),
+                    disabled=any(str(x).strip() in registros_invalidos for x in agendados["ID_Tratamiento"]),
                 )
 
             st.progress(int(porcentaje))
@@ -174,14 +174,15 @@ def render_programacion():
                     f"**{fila['Nombre']}** · {fila['Entidad']} · "
                     f"`{fila['mCI']} mCi` · 📅 {fila.get('Fecha_Capsula', '')}"
                 )
-                if str(fila["ID"]).strip() in ids_duplicados:
+                if str(fila["ID_Tratamiento"]).strip() in registros_invalidos:
                     continue
                 if col_borrar.button(
                     "🗑️",
                     key=f"del_a_{idx}_{fila['ID']}",
-                    help="Eliminar paciente"
+                    help="Eliminación deshabilitada hasta definir la política de conservación de registros.",
+                    disabled=True,
                 ):
-                    ok = borrar_paciente(str(fila["ID"]))
+                    ok = borrar_paciente(str(fila["ID_Tratamiento"]))
                     if ok:
                         st.session_state.lista_local = cargar_datos()
                         st.rerun()
@@ -193,16 +194,16 @@ def render_inventario():
         st.info("No hay datos para mostrar.")
         return
 
-    ids = [str(p.get("ID", "")).strip() for p in lista]
-    ids_duplicados = {id_paciente for id_paciente in ids if ids.count(id_paciente) > 1}
-    if ids_duplicados:
-        st.error("Hay identificaciones repetidas. La trazabilidad de esos registros está deshabilitada hasta asignar un identificador a cada tratamiento.")
+    codigos = [str(p.get("ID_Tratamiento") or "").strip() for p in lista]
+    registros_invalidos = {codigo for codigo in codigos if not codigo or codigos.count(codigo) > 1}
+    if registros_invalidos:
+        st.error("Hay tratamientos sin código único. Complete la migración antes de operar con estos registros.")
 
     lista_trazabilidad = [
         p for p in lista
         if str(p.get("Agendado", "NO")) == "SI"
         and str(p.get("Reporte_Generado", "NO")) != "SI"
-        and str(p.get("ID", "")).strip() not in ids_duplicados
+        and str(p.get("ID_Tratamiento") or "").strip() not in registros_invalidos
     ]
 
     if not lista_trazabilidad:
@@ -216,7 +217,7 @@ def render_inventario():
     if "seleccionados_trazabilidad" not in st.session_state:
         st.session_state.seleccionados_trazabilidad = set()
 
-    todos_ids = {str(p["ID"]) for p in lista_trazabilidad}
+    todos_ids = {str(p["ID_Tratamiento"]) for p in lista_trazabilidad}
 
     col_sel, col_desel, _ = st.columns([2, 2, 4])
     if col_sel.button("☑️ Seleccionar todos", use_container_width=True):
@@ -244,13 +245,13 @@ def render_inventario():
         col_estado.markdown(f"`{estado_actual}`")
         checked = col_check.checkbox(
             "",
-            value=str(p["ID"]) in st.session_state.seleccionados_trazabilidad,
+            value=str(p["ID_Tratamiento"]) in st.session_state.seleccionados_trazabilidad,
             key=f"chk_{idx}_{p['ID']}",
         )
         if checked:
-            st.session_state.seleccionados_trazabilidad.add(str(p["ID"]))
+            st.session_state.seleccionados_trazabilidad.add(str(p["ID_Tratamiento"]))
         else:
-            st.session_state.seleccionados_trazabilidad.discard(str(p["ID"]))
+            st.session_state.seleccionados_trazabilidad.discard(str(p["ID_Tratamiento"]))
 
         with st.expander(f"Ver detalles — {p['Nombre']}", expanded=False):
             col_a, col_b = st.columns(2)
@@ -282,7 +283,7 @@ def render_inventario():
 
                 if st.button("💾 Guardar Cambios", key=f"g_{idx}"):
                     ok = actualizar_paciente(
-                        str(p["ID"]), nuevo_estado, obs,
+                        str(p["ID_Tratamiento"]), nuevo_estado, obs,
                         fecha_admin_str, fecha_recep_str
                     )
                     if ok:
@@ -300,12 +301,10 @@ def render_inventario():
                     if st.button("✅ Confirmar Traspaso", key=f"tr_{idx}"):
                         if not rn or not ri:
                             st.warning("Completa nombre e ID del nuevo paciente.")
-                        elif ri in ids:
-                            st.error("La identificación ya tiene un registro. No es posible reasignar hasta que cada tratamiento tenga un identificador propio.")
                         else:
                             historial = f"Dosis cedida por {p['Nombre']}. Motivo: {obs}"
                             ok = reasignar_dosis(
-                                str(p["ID"]), rn, ri, re, rd,
+                                str(p["ID_Tratamiento"]), rn, ri, re, rd,
                                 str(p.get("Fecha_Capsula", "")), historial
                             )
                             if ok:
@@ -323,7 +322,7 @@ def render_inventario():
     seleccionados = list(st.session_state.seleccionados_trazabilidad & todos_ids)
 
     if seleccionados:
-        lista_para_pdf = [p for p in lista_trazabilidad if str(p["ID"]) in seleccionados]
+        lista_para_pdf = [p for p in lista_trazabilidad if str(p["ID_Tratamiento"]) in seleccionados]
         st.info(f"📋 {len(seleccionados)} paciente(s) seleccionado(s) para el reporte.")
 
         col_pdf, col_cerrar = st.columns(2)
