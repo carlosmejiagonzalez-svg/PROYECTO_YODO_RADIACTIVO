@@ -2,12 +2,14 @@ import streamlit as st
 import requests
 import logging
 from streamlit_gsheets import GSheetsConnection
-from config import SCRIPT_URL, COLUMNAS_REQUERIDAS
+from config import SCRIPT_URL, SCRIPT_TOKEN, COLUMNAS_REQUERIDAS
 
 logger = logging.getLogger(__name__)
 
 @st.cache_resource
 def _get_connection():
+    if st.secrets['connections']['gsheets'].get('type') != 'service_account':
+        raise ValueError('Se requiere conexión privada mediante cuenta de servicio.')
     return st.connection("gsheets", type=GSheetsConnection)
 
 def cargar_datos():
@@ -22,49 +24,59 @@ def cargar_datos():
         for col in COLUMNAS_REQUERIDAS:
             if col not in df.columns:
                 df[col] = ""
+        df["ID_Tratamiento"] = df["ID_Tratamiento"].fillna("").astype(str).str.strip()
         return df.to_dict("records")
     except Exception as e:
-        logger.error("Error cargando datos: %s", e)
-        st.error(f"❌ No se pudo cargar los datos: {e}")
+        logger.error("Error cargando datos: %s", type(e).__name__)
+        st.error("❌ No se pudieron cargar los datos. Revise la configuración de conexión con el administrador.")
+        st.stop()
         return []
 
-def _get(params, mensaje_exito="", mensaje_error="Error en la operación"):
-    if not SCRIPT_URL:
-        st.error("⚠️ URL del Apps Script no configurada.")
+def _post(params, mensaje_exito="", mensaje_error="Error en la operación"):
+    if not SCRIPT_URL or len(SCRIPT_TOKEN) < 32:
+        st.error("⚠️ Conexión de escritura no configurada. Se requieren la URL y la clave del servicio.")
         return False
     try:
-        resp = requests.get(SCRIPT_URL, params=params, timeout=15)
+        resp = requests.post(SCRIPT_URL, json={**params, "api_token": SCRIPT_TOKEN}, timeout=15)
         resp.raise_for_status()
+        try:
+            resultado = resp.json()
+        except ValueError:
+            st.error(f"❌ {mensaje_error}: respuesta inválida del servicio. Compruebe el estado antes de reintentar.")
+            return False
+        if not isinstance(resultado, dict) or resultado.get("success") is not True:
+            st.error(f"❌ {mensaje_error}: {resultado.get('message', 'Respuesta no confirmada') if isinstance(resultado, dict) else 'Respuesta no confirmada'}")
+            return False
         if mensaje_exito:
             st.success(mensaje_exito)
         return True
     except requests.Timeout:
-        st.error("⏱️ La solicitud tardó demasiado. Intenta de nuevo.")
+        st.error("⏱️ La solicitud tardó demasiado. La operación podría haberse completado; compruebe el estado antes de reintentar.")
     except requests.HTTPError as e:
         st.error(f"❌ {mensaje_error}: Error HTTP {e.response.status_code}")
-    except requests.RequestException as e:
-        st.error(f"❌ {mensaje_error}: {e}")
+    except requests.RequestException:
+        st.error(f"❌ {mensaje_error}: fallo de conexión. Compruebe el estado antes de reintentar.")
     return False
 
 def registrar_paciente(nombre, id_paciente, entidad, mci, fecha):
-    return _get(
+    return _post(
         params={"action":"register","nombre":nombre,"id":id_paciente,"entidad":entidad,"mci":mci,"fecha":fecha},
         mensaje_exito=f"✅ Paciente {nombre} registrado correctamente.",
         mensaje_error="No se pudo registrar el paciente",
     )
 
 def borrar_paciente(id_paciente):
-    return _get(
-        params={"action":"borrar_paciente","id":id_paciente},
+    return _post(
+        params={"action":"borrar_paciente","id_tratamiento":id_paciente},
         mensaje_exito="🗑️ Paciente eliminado.",
         mensaje_error="No se pudo eliminar el paciente",
     )
 
 def actualizar_paciente(old_id, estado, notas, fecha_administracion="", fecha_recepcion=""):
-    return _get(
+    return _post(
         params={
             "action": "update",
-            "old_id": old_id,
+            "id_tratamiento": old_id,
             "estado": estado,
             "notas": notas,
             "fecha_administracion": fecha_administracion,
@@ -75,35 +87,31 @@ def actualizar_paciente(old_id, estado, notas, fecha_administracion="", fecha_re
     )
 
 def reasignar_dosis(old_id, nombre, id_nuevo, entidad, mci, fecha, notas):
-    return _get(
-        params={"action":"reasignar","old_id":old_id,"nombre":nombre,"id":id_nuevo,"entidad":entidad,"mci":mci,"fecha":fecha,"notas":notas},
+    return _post(
+        params={"action":"reasignar","id_tratamiento":old_id,"nombre":nombre,"id":id_nuevo,"entidad":entidad,"mci":mci,"fecha":fecha,"notas":notas},
         mensaje_exito="🔄 Dosis reasignada correctamente.",
         mensaje_error="No se pudo completar la reasignación",
     )
 
 def reset_completo():
-    if not SCRIPT_URL:
-        st.error("⚠️ URL del Apps Script no configurada.")
-        return False
-    try:
-        resp = requests.post(SCRIPT_URL, json={"confirmar": "BORRAR_TODO"}, timeout=15)
-        resp.raise_for_status()
-        return True
-    except requests.RequestException as e:
-        st.error(f"❌ Error en reset: {e}")
-        return False
+    return _post(
+        params={"action": "reset_agendados", "confirmar": "BORRAR_TODO"},
+        mensaje_exito="Agendamientos limpiados; registros conservados.",
+        mensaje_error="No se pudo limpiar el agendamiento",
+    )
 
 def agendar_paciente(id_paciente):
-    return _get(
-        params={"action": "agendar", "id": id_paciente},
-        mensaje_exito="📅 Paciente agendado para esta semana.",
+    return _post(
+        params={"action": "agendar", "id_tratamiento": id_paciente},
+        mensaje_exito="📅 Tratamiento agendado para el pedido.",
         mensaje_error="No se pudo agendar el paciente",
     )
 
 def cerrar_trazabilidad(ids):
     ids_str = ",".join(ids)
-    return _get(
+    return _post(
         params={"action": "cerrar_trazabilidad", "ids": ids_str},
-        mensaje_exito="📋 Reporte generado y pacientes cerrados correctamente.",
+        mensaje_exito="📋 Tratamientos seleccionados marcados como reportados.",
         mensaje_error="No se pudo cerrar la trazabilidad",
     )
+

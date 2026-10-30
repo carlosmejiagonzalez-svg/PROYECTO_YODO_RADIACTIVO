@@ -1,12 +1,17 @@
 import streamlit as st
-from ui.tabs import render_programacion, render_inventario, render_calculadora
-from services.data_service import cargar_datos
+from services.access_service import exigir_acceso
 
 st.set_page_config(
     page_title="Nuclear 2000 Ltda",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+
+exigir_acceso()
+
+# Importar los servicios de datos únicamente después de autorizar la cuenta.
+from ui.tabs import render_programacion, render_inventario, render_calculadora
+from services.data_service import cargar_datos
 
 if "lista_local" not in st.session_state:
     st.session_state.lista_local = cargar_datos()
@@ -32,3 +37,4 @@ with t2:
 
 with t3:
     render_calculadora()
+

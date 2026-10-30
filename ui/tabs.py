@@ -64,6 +64,11 @@ def render_programacion():
 
         df = pd.DataFrame(lista)
 
+        codigos = df["ID_Tratamiento"].fillna("").astype(str).str.strip()
+        registros_invalidos = set(codigos[codigos.duplicated(keep=False)]) | {""}
+        if codigos.isin(registros_invalidos).any():
+            st.error("Hay tratamientos sin código único. Complete la migración antes de operar con estos registros.")
+
         if "Agendado" not in df.columns:
             df["Agendado"] = "NO"
 
@@ -91,21 +96,25 @@ def render_programacion():
                     f"**{fila['Nombre']}** · {fila['Entidad']} · "
                     f"`{fila['mCI']} mCi` · 📅 {fila.get('Fecha_Capsula', '')}"
                 )
+                if str(fila["ID_Tratamiento"]).strip() in registros_invalidos:
+                    col_agendar.warning("Registro duplicado")
+                    continue
                 if col_agendar.button(
                     "📅 Agendar",
                     key=f"ag_{idx}_{fila['ID']}",
                     use_container_width=True
                 ):
-                    ok = agendar_paciente(str(fila["ID"]))
+                    ok = agendar_paciente(str(fila["ID_Tratamiento"]))
                     if ok:
                         st.session_state.lista_local = cargar_datos()
                         st.rerun()
                 if col_borrar.button(
                     "🗑️",
                     key=f"del_p_{idx}_{fila['ID']}",
-                    help="Eliminar paciente"
+                    help="Eliminación deshabilitada hasta definir la política de conservación de registros.",
+                    disabled=True,
                 ):
-                    ok = borrar_paciente(str(fila["ID"]))
+                    ok = borrar_paciente(str(fila["ID_Tratamiento"]))
                     if ok:
                         st.session_state.lista_local = cargar_datos()
                         st.rerun()
@@ -115,12 +124,17 @@ def render_programacion():
         # ═══════════════════════════════════════════
         # SECCIÓN 2 — Pedido de esta semana
         # ═══════════════════════════════════════════
-        st.subheader(f"📋 Pedido de esta semana ({len(agendados)})")
+        st.subheader(f"📋 Pacientes agendados ({len(agendados)})")
+        st.caption("La lista muestra todos los registros marcados como agendados; no se filtra automáticamente por semana.")
 
         if agendados.empty:
-            st.info("No hay pacientes agendados para esta semana.")
+            st.info("No hay pacientes agendados.")
         else:
-            LIMITE_MCI = 150.0
+            LIMITE_MCI = st.number_input(
+                "Capacidad de referencia del pedido (mCi)",
+                min_value=0.1, value=150.0, step=10.0,
+                help="Valor de referencia editable. Verifique el límite aplicable en la autorización y el procedimiento de la instalación.",
+            )
             total_mci = pd.to_numeric(agendados["mCI"], errors="coerce").sum()
             restante = LIMITE_MCI - total_mci
             porcentaje = min((total_mci / LIMITE_MCI) * 100, 100)
@@ -134,23 +148,24 @@ def render_programacion():
                     delta_color="normal" if restante > 0 else "inverse",
                 )
             with col_pdf:
-                pdf_bytes = generar_pdf_pedido(lista)
+                pdf_bytes = generar_pdf_pedido(agendados.to_dict("records"))
                 st.download_button(
                     "📄 Descargar Pedido PDF",
                     data=pdf_bytes,
                     file_name="pedido.pdf",
                     mime="application/pdf",
                     use_container_width=True,
+                    disabled=any(str(x).strip() in registros_invalidos for x in agendados["ID_Tratamiento"]),
                 )
 
             st.progress(int(porcentaje))
 
             if total_mci >= LIMITE_MCI:
-                st.error(f"🚨 **LÍMITE ALCANZADO** — El pedido ha llegado a {total_mci:.1f} mCi.")
+                st.error(f"🚨 **Referencia alcanzada** — El pedido suma {total_mci:.1f} mCi. Verifique la capacidad autorizada.")
             elif total_mci >= LIMITE_MCI * 0.85:
                 st.warning(f"⚠️ **ATENCIÓN** — Llevas {total_mci:.1f} mCi de {LIMITE_MCI:.0f} mCi. Solo quedan {restante:.1f} mCi disponibles.")
             else:
-                st.success(f"✅ Capacidad disponible: {restante:.1f} mCi restantes de {LIMITE_MCI:.0f} mCi permitidos.")
+                st.success(f"✅ Restan {restante:.1f} mCi respecto a la capacidad de referencia de {LIMITE_MCI:.0f} mCi.")
 
             st.write("")
             for idx, fila in agendados.iterrows():
@@ -159,12 +174,15 @@ def render_programacion():
                     f"**{fila['Nombre']}** · {fila['Entidad']} · "
                     f"`{fila['mCI']} mCi` · 📅 {fila.get('Fecha_Capsula', '')}"
                 )
+                if str(fila["ID_Tratamiento"]).strip() in registros_invalidos:
+                    continue
                 if col_borrar.button(
                     "🗑️",
                     key=f"del_a_{idx}_{fila['ID']}",
-                    help="Eliminar paciente"
+                    help="Eliminación deshabilitada hasta definir la política de conservación de registros.",
+                    disabled=True,
                 ):
-                    ok = borrar_paciente(str(fila["ID"]))
+                    ok = borrar_paciente(str(fila["ID_Tratamiento"]))
                     if ok:
                         st.session_state.lista_local = cargar_datos()
                         st.rerun()
@@ -176,10 +194,16 @@ def render_inventario():
         st.info("No hay datos para mostrar.")
         return
 
+    codigos = [str(p.get("ID_Tratamiento") or "").strip() for p in lista]
+    registros_invalidos = {codigo for codigo in codigos if not codigo or codigos.count(codigo) > 1}
+    if registros_invalidos:
+        st.error("Hay tratamientos sin código único. Complete la migración antes de operar con estos registros.")
+
     lista_trazabilidad = [
         p for p in lista
         if str(p.get("Agendado", "NO")) == "SI"
         and str(p.get("Reporte_Generado", "NO")) != "SI"
+        and str(p.get("ID_Tratamiento") or "").strip() not in registros_invalidos
     ]
 
     if not lista_trazabilidad:
@@ -193,13 +217,17 @@ def render_inventario():
     if "seleccionados_trazabilidad" not in st.session_state:
         st.session_state.seleccionados_trazabilidad = set()
 
-    todos_ids = {str(p["ID"]) for p in lista_trazabilidad}
+    todos_ids = {str(p["ID_Tratamiento"]) for p in lista_trazabilidad}
 
     col_sel, col_desel, _ = st.columns([2, 2, 4])
     if col_sel.button("☑️ Seleccionar todos", use_container_width=True):
         st.session_state.seleccionados_trazabilidad = todos_ids.copy()
+        for codigo in todos_ids:
+            st.session_state[f"trazabilidad_{codigo}"] = True
     if col_desel.button("🔲 Deseleccionar todos", use_container_width=True):
         st.session_state.seleccionados_trazabilidad = set()
+        for codigo in todos_ids:
+            st.session_state[f"trazabilidad_{codigo}"] = False
 
     st.write("")
 
@@ -219,15 +247,18 @@ def render_inventario():
             f"{p.get('Entidad','')} · `{p.get('mCI','')} mCi`"
         )
         col_estado.markdown(f"`{estado_actual}`")
+        clave_seleccion = f"trazabilidad_{p['ID_Tratamiento']}"
+        if clave_seleccion not in st.session_state:
+            st.session_state[clave_seleccion] = str(p["ID_Tratamiento"]) in st.session_state.seleccionados_trazabilidad
         checked = col_check.checkbox(
-            "",
-            value=str(p["ID"]) in st.session_state.seleccionados_trazabilidad,
-            key=f"chk_{idx}_{p['ID']}",
+            "Seleccionar tratamiento",
+            key=clave_seleccion,
+            label_visibility="collapsed",
         )
         if checked:
-            st.session_state.seleccionados_trazabilidad.add(str(p["ID"]))
+            st.session_state.seleccionados_trazabilidad.add(str(p["ID_Tratamiento"]))
         else:
-            st.session_state.seleccionados_trazabilidad.discard(str(p["ID"]))
+            st.session_state.seleccionados_trazabilidad.discard(str(p["ID_Tratamiento"]))
 
         with st.expander(f"Ver detalles — {p['Nombre']}", expanded=False):
             col_a, col_b = st.columns(2)
@@ -237,7 +268,7 @@ def render_inventario():
                 nuevo_estado = st.selectbox(
                     "Estado", ESTADOS_VALIDOS,
                     index=ESTADOS_VALIDOS.index(estado_actual) if estado_actual in ESTADOS_VALIDOS else 0,
-                    key=f"s_{idx}",
+                    key=f"s_{p['ID_Tratamiento']}",
                 )
 
                 fecha_admin_str = ""
@@ -245,21 +276,21 @@ def render_inventario():
 
                 if nuevo_estado == "RECIBIDO":
                     fecha_recep_str = st.date_input(
-                        "Fecha Recepción", key=f"fr_{idx}"
+                        "Fecha Recepción", key=f"fr_{p['ID_Tratamiento']}"
                     ).strftime("%d/%m/%Y")
 
                 if nuevo_estado == "ADMINISTRADA":
                     fecha_admin_str = st.date_input(
-                        "Fecha Administración", key=f"fa_{idx}"
+                        "Fecha Administración", key=f"fa_{p['ID_Tratamiento']}"
                     ).strftime("%d/%m/%Y")
 
                 notas_valor = str(p.get("Notas", ""))
                 notas_valor = "" if notas_valor.lower() == "nan" else notas_valor
-                obs = st.text_area("Notas / Motivo", value=notas_valor, key=f"o_{idx}")
+                obs = st.text_area("Notas / Motivo", value=notas_valor, key=f"o_{p['ID_Tratamiento']}")
 
-                if st.button("💾 Guardar Cambios", key=f"g_{idx}"):
+                if st.button("💾 Guardar Cambios", key=f"g_{p['ID_Tratamiento']}"):
                     ok = actualizar_paciente(
-                        str(p["ID"]), nuevo_estado, obs,
+                        str(p["ID_Tratamiento"]), nuevo_estado, obs,
                         fecha_admin_str, fecha_recep_str
                     )
                     if ok:
@@ -269,18 +300,18 @@ def render_inventario():
             with col_b:
                 if estado_actual == "CANCELADO":
                     st.info("🔄 Reasignación de Dosis")
-                    rn = st.text_input("Nombre nuevo paciente", key=f"rn_{idx}").strip().upper()
-                    ri = st.text_input("ID nuevo paciente", key=f"ri_{idx}").strip()
-                    re = st.text_input("Entidad", value=p.get("Entidad", ""), key=f"re_{idx}").strip().upper()
-                    rd = st.number_input("mCi a reasignar", value=float(p.get("mCI", 0)), key=f"rd_{idx}")
+                    rn = st.text_input("Nombre nuevo paciente", key=f"rn_{p['ID_Tratamiento']}").strip().upper()
+                    ri = st.text_input("ID nuevo paciente", key=f"ri_{p['ID_Tratamiento']}").strip()
+                    re = st.text_input("Entidad", value=p.get("Entidad", ""), key=f"re_{p['ID_Tratamiento']}").strip().upper()
+                    rd = st.number_input("mCi a reasignar", min_value=0.0, value=float(p.get("mCI", 0)), key=f"rd_{p['ID_Tratamiento']}")
 
-                    if st.button("✅ Confirmar Traspaso", key=f"tr_{idx}"):
+                    if st.button("✅ Confirmar Traspaso", key=f"tr_{p['ID_Tratamiento']}"):
                         if not rn or not ri:
                             st.warning("Completa nombre e ID del nuevo paciente.")
                         else:
                             historial = f"Dosis cedida por {p['Nombre']}. Motivo: {obs}"
                             ok = reasignar_dosis(
-                                str(p["ID"]), rn, ri, re, rd,
+                                str(p["ID_Tratamiento"]), rn, ri, re, rd,
                                 str(p.get("Fecha_Capsula", "")), historial
                             )
                             if ok:
@@ -298,7 +329,7 @@ def render_inventario():
     seleccionados = list(st.session_state.seleccionados_trazabilidad & todos_ids)
 
     if seleccionados:
-        lista_para_pdf = [p for p in lista_trazabilidad if str(p["ID"]) in seleccionados]
+        lista_para_pdf = [p for p in lista_trazabilidad if str(p["ID_Tratamiento"]) in seleccionados]
         st.info(f"📋 {len(seleccionados)} paciente(s) seleccionado(s) para el reporte.")
 
         col_pdf, col_cerrar = st.columns(2)
@@ -366,3 +397,4 @@ def render_calculadora():
 
     except ValueError as e:
         st.error(f"⚠️ {e}")
+

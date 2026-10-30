@@ -1,16 +1,17 @@
 import os
 import streamlit as st
 
-def get_script_url():
+def get_secret(nombre):
     try:
-        return st.secrets["apps_script_url"]
+        return str(st.secrets.get(nombre, "")).strip()
     except (KeyError, FileNotFoundError):
-        st.error("⚠️ La variable apps_script_url no está configurada en Secrets.")
         return ""
 
-SCRIPT_URL = get_script_url()
+SCRIPT_URL = get_secret("apps_script_url")
+SCRIPT_TOKEN = get_secret("apps_script_token")
 HL_YODO_DIAS = 8.02
 LOGO_PATH = "logo.png"
 TIMEZONE = "America/Bogota"
-COLUMNAS_REQUERIDAS = ["Nombre","ID","Entidad","Fecha_Capsula","mCI","Estado","Fecha_Recepcion","Fecha_Administracion","Notas"]
+COLUMNAS_REQUERIDAS = ["Nombre","ID","Entidad","Fecha_Capsula","mCI","Estado","Fecha_Recepcion","Fecha_Administracion","Notas","ID_Tratamiento"]
 ESTADOS_VALIDOS = ["PENDIENTE","RECIBIDO","ADMINISTRADA","CANCELADO","DECAIMIENTO"]
+
