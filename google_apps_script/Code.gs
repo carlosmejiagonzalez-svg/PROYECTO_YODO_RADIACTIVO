@@ -24,7 +24,7 @@ function migrarIdentificadoresTratamiento() {
     return changed;
   } finally { lock.releaseLock(); }
 }
-function doGet(e) {
+function ejecutarOperacion_(e) {
   var lock=LockService.getScriptLock();
   try {
     lock.waitLock(30000);
@@ -71,7 +71,7 @@ function doGet(e) {
   } catch(err) { return jsonResponse({success:false,message:err.message}); }
   finally { if(lock.hasLock()) lock.releaseLock(); }
 }
-function doPost(e) {
+function resetAgendados_(e) {
   var lock=LockService.getScriptLock();
   try {
     lock.waitLock(30000);
@@ -93,3 +93,42 @@ function buscarFila(sheet,codigo) {
 function limpiar(v) { return v==null ? '' : String(v).trim(); }
 function jsonResponse(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
 function registrarLog(a,d) { try { var s=SpreadsheetApp.getActiveSpreadsheet().getSheetByName(LOG_SHEET); if(s) s.appendRow([new Date(),a,d]); } catch(_) {} }
+
+// Las solicitudes GET nunca modifican datos.
+function doGet() {
+  return jsonResponse({success:false,message:'Método no permitido. Use el cliente autorizado.'});
+}
+
+// API_TOKEN se almacena en Propiedades del script, nunca en el repositorio.
+function tokenValido_(recibido) {
+  var esperado=PropertiesService.getScriptProperties().getProperty('API_TOKEN') || '';
+  if(typeof recibido !== 'string' || esperado.length < 32) return false;
+  var diferencia=esperado.length ^ recibido.length;
+  for(var i=0;i<esperado.length;i++) diferencia |= esperado.charCodeAt(i) ^ (recibido.charCodeAt(i) || 0);
+  return diferencia === 0;
+}
+
+function doPost(e) {
+  var body;
+  try {
+    body=JSON.parse(e.postData.contents);
+  } catch(_) { return jsonResponse({success:false,message:'Solicitud inválida.'}); }
+  if(!body || !tokenValido_(body.api_token)) {
+    return jsonResponse({success:false,message:'Acceso denegado.'});
+  }
+  delete body.api_token;
+  if(body.action === 'reset_agendados') {
+    return resetAgendados_({postData:{contents:JSON.stringify(body)}});
+  }
+  return ejecutarOperacion_({parameter:body});
+}
+
+// Ejecutar manualmente en el editor; no envía ni imprime el valor de la clave.
+function prepararClaveServicio() {
+  var lock=LockService.getScriptLock(); lock.waitLock(30000);
+  try {
+    var props=PropertiesService.getScriptProperties();
+    if(!props.getProperty('API_TOKEN')) props.setProperty('API_TOKEN', Utilities.getUuid()+Utilities.getUuid());
+    console.log('Clave disponible en Configuración del proyecto > Propiedades del script. No compartirla en el chat.');
+  } finally { lock.releaseLock(); }
+}

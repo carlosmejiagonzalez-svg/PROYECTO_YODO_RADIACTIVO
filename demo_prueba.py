@@ -7,6 +7,7 @@ import streamlit as st
 st.set_page_config(page_title='Prueba I-131', layout='wide')
 config = types.ModuleType('config')
 config.SCRIPT_URL = ''
+config.SCRIPT_TOKEN = ''
 config.COLUMNAS_REQUERIDAS = ['Nombre','ID','Entidad','Fecha_Capsula','mCI','Estado','Fecha_Recepcion','Fecha_Administracion','Notas','ID_Tratamiento']
 config.ESTADOS_VALIDOS = ['PENDIENTE','RECIBIDO','ADMINISTRADA','CANCELADO','DECAIMIENTO']
 config.LOGO_PATH = 'logo.png'
