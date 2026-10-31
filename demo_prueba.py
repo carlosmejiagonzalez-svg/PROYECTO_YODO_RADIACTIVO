@@ -1,4 +1,4 @@
-"""Entorno aislado de demostración: no conecta con servicios ni datos reales."""
+"""Demostración con registros ficticios y diagnóstico opcional de encabezados."""
 import sys
 import types
 import uuid
@@ -65,3 +65,18 @@ a,b,c=st.tabs(['📋 Programación','📦 Inventario y trazabilidad','🧮 Calcu
 with a: tabs.render_programacion()
 with b: tabs.render_inventario()
 with c: tabs.render_calculadora()
+
+with st.expander('Comprobar conexión privada — solo encabezados'):
+    st.caption('Esta comprobación consulta solo la primera fila de la copia de prueba. No importa ni modifica pacientes.')
+    if st.button('Verificar conexión privada'):
+        try:
+            credencial_json = st.secrets['service_account_json']
+        except (KeyError, FileNotFoundError):
+            st.info('Falta configurar service_account_json en Secrets de esta aplicación de prueba.')
+        else:
+            from services.connection_probe import comprobar_encabezados
+            ok, mensaje = comprobar_encabezados(credencial_json)
+            if ok:
+                st.success(mensaje)
+            else:
+                st.error(mensaje)

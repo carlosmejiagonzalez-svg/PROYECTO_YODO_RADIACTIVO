@@ -14,7 +14,7 @@ La hoja original tiene un permiso `anyone / writer`: cualquier persona que conoz
 - Las escrituras viajan mediante POST JSON, con una clave compartida entre el servidor de Streamlit y las Propiedades del script. No se envían datos de pacientes ni la clave en parámetros de la URL.
 - El Apps Script rechaza solicitudes GET y solicitudes POST sin la clave correcta, incluido el reinicio del agendamiento.
 - Una respuesta HTTP correcta no basta: se exige `success: true`.
-- La demostración `demo_prueba.py` permanece aislada y no utiliza las credenciales de producción.
+- La demostración `demo_prueba.py` conserva los registros ficticios en memoria. Su diagnóstico opcional usa una clave de prueba guardada en Secrets exclusivamente para leer `Pacientes!A1:L1` de la copia fijada en el código; no importa ni modifica pacientes. No se deben copiar credenciales de producción a una demo.
 
 Estos controles aún deben validarse con Google y Streamlit reales. No constituyen por sí solos una validación institucional del tratamiento de información clínica.
 
@@ -59,3 +59,7 @@ server_metadata_url = "https://accounts.google.com/.well-known/openid-configurat
 - Estos ensayos no sustituyen las pruebas con OAuth real, la cuenta de servicio ni la implementación HTTP de Google.
 
 Documentación de referencia: https://docs.streamlit.io/develop/api-reference/user/st.login
+
+## Diagnóstico limitado de la conexión privada
+
+En la aplicación de demostración desplegada con `demo_prueba.py`, puede configurarse una clave JSON de la cuenta prevista en un secreto raíz llamado `service_account_json`, como cadena literal TOML entre tres comillas simples. No subir el JSON al repositorio ni compartirlo en conversaciones o capturas. El diagnóstico rechaza archivos de otras cuentas y direcciones de autenticación distintas a la de Google. Solo consulta los encabezados de la copia de prueba y presenta mensajes de resultado sin mostrar credenciales ni registros clínicos. Esta prueba confirma la autenticación de lectura; no confirma OAuth de usuarios ni la conexión de escritura del Apps Script.
